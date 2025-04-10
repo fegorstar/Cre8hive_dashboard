@@ -1,0 +1,15 @@
+@font-face {
+  font-family: 'Nohemi';
+  src: url('/assets/fonts/nohemi-font-family/Nohemi-Regular-BF6438cc579d934.woff2') format('woff2'),
+       url('/assets/fonts/nohemi-font-family/Nohemi-Regular-BF6438cc579d934.woff') format('woff'),
+       url('/assets/fonts/nohemi-font-family/Nohemi-Regular-BF6438cc579d934.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+body {
+  font-family: 'Nohemi', sans-serif;
+}
+
+@import "tailwindcss";
+@import 'font-awesome/css/font-awesome.min.css';
