@@ -243,7 +243,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* Footer */}
+          {/* Footer  */}
           <Footer />
         </div>
       </div>
