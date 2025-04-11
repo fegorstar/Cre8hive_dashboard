@@ -76,30 +76,75 @@ const Dashboard = () => {
     (transaction) => transaction.type === activeTab
   );
 
-  // Chart Data for React-Chart.js
-  const chartData = {
-    labels: ['12:00am', '4:00am', '8:00am', '12:00pm', '4:00pm', '8:00pm', '11:59pm'],
+  // Example API Call or Static Data (Replace with real data fetching logic later)
+  const fetchTransactionData = async () => {
+    // For demonstration purposes, we'll use a mock response
+    return {
+      inflow: [500000, 1200000, 1500000, 2500000, 2900000, 3000000, 3200000],
+      outflow: [100000, 300000, 700000, 1500000, 1800000, 2400000, 2600000],
+      periods: ['12/01/2025', '12/02/2025', '12/03/2025'], // Example of available time periods
+    };
+  };
+
+  // Fetch data and update chart
+  const [chartData, setChartData] = useState({
+    labels: [],
     datasets: [
       {
         label: 'Inflow',
-        data: [1000000, 1500000, 2000000, 2200000, 2500000, 2700000, 3000000],
+        data: [],
         borderColor: 'green',
         backgroundColor: 'rgba(0, 255, 0, 0.2)',
         fill: true,
         tension: 0.4,
+        borderWidth: 1,
       },
       {
         label: 'Outflow',
-        data: [500000, 800000, 1200000, 1600000, 2000000, 2300000, 2700000],
+        data: [],
         borderColor: 'red',
         backgroundColor: 'rgba(255, 0, 0, 0.2)',
         fill: true,
         tension: 0.4,
+        borderWidth: 1,
       },
     ],
-  };
+  });
 
-  // Chart Options
+  useEffect(() => {
+    const fetchData = async () => {
+      const data = await fetchTransactionData();
+      setChartData({
+        labels: ['12:00am', '4:00am', '8:00am', '12:00pm', '4:00pm', '8:00pm', '11:59pm'], // Set the time labels
+        datasets: [
+          {
+            label: 'Inflow',
+            data: data.inflow, // Dynamic inflow data
+            borderColor: 'green',
+            backgroundColor: 'rgba(0, 255, 0, 0.2)',
+            fill: true,
+            tension: 0.4,
+            borderWidth: 1,
+          },
+          {
+            label: 'Outflow',
+            data: data.outflow, // Dynamic outflow data
+            borderColor: 'red',
+            backgroundColor: 'rgba(255, 0, 0, 0.2)',
+            fill: true,
+            tension: 0.4,
+            borderWidth: 1,
+          },
+        ],
+      });
+
+      // Set available periods from fetched data
+      setSelectedPeriod(data.periods[0]);
+    };
+
+    fetchData();
+  }, []); // Only run once when component mounts
+
   const chartOptions = {
     responsive: true,
     plugins: {
@@ -116,15 +161,21 @@ const Dashboard = () => {
         beginAtZero: true,
       },
       y: {
+        min: 500000, // Set the min value for the Y-axis to 500K
+        max: 3000000, // Set the max value for the Y-axis to 3M
         ticks: {
           callback: function (value) {
-            return value / 1000 + 'k'; // Format the y-axis to show values in "k" (thousands)
+            if (value >= 1000000) {
+              return value / 1000000 + 'M'; // Display in millions
+            }
+            return value / 1000 + 'K'; // Otherwise display in thousands
           },
         },
       },
     },
   };
 
+  
   return (
     <main>
       <div id="app-layout" className="overflow-x-hidden flex bg-white border-t border-gray-300">
@@ -137,8 +188,8 @@ const Dashboard = () => {
 
           {/* Content Section */}
           <div className="px-6 pb-20 pt-6">
-            <div className="flex items-center mb-6 justify-between w-full border-b border-gray-300 pb-4">
-              <p className="inline-block text-lg leading-5 font-semibold">Dashboard</p>
+            <div className="flex items-center mb-6 justify-between -mx-6 start-full end-full border-b border-gray-300 pb-4">
+              <p className="inline-block text-lg px-6 leading-5 font-semibold">Dashboard</p>
             </div>
 
             {/* Parent Card for 4 Cards */}
@@ -171,9 +222,26 @@ const Dashboard = () => {
             </div>
 
             {/* Chart Section */}
+              {/* Chart Section */}
             <div className="mb-6 p-8">
               <p className="text-lg font-semibold">Analytics</p>
               <div className="flex justify-end items-center space-x-4">
+                {/* Inflow/Outflow Status */}
+                <div 
+                  className="text-green-500 text-lg cursor-pointer"
+                  onMouseEnter={() => setHighlightInflow(true)}
+                  onMouseLeave={() => setHighlightInflow(false)}
+                >
+                  <span className="inline-block px-3 py-1 rounded-full" style={{ backgroundColor: 'green', color: 'white' }}>Inflow</span>
+                </div>
+                <div
+                  className="text-red-500 text-lg cursor-pointer"
+                  onMouseEnter={() => setHighlightOutflow(true)}
+                  onMouseLeave={() => setHighlightOutflow(false)}
+                >
+                  <span className="inline-block px-3 py-1 rounded-full" style={{ backgroundColor: 'red', color: 'white' }}>Outflow</span>
+                </div>
+
                 {/* Dropdown for time period */}
                 <select
                   className="p-2 border border-gray-300 rounded"
@@ -187,6 +255,8 @@ const Dashboard = () => {
               </div>
               <Line data={chartData} options={chartOptions} height={300} width={600} />
             </div>
+         
+         
 
             {/* Tabs for Deposits and Withdrawals */}
             <div className="flex items-center mb-6 justify-between w-full border-b border-gray-300 pb-4">
