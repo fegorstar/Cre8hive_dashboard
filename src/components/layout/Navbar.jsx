@@ -28,7 +28,7 @@ const Navbar = () => {
   return (
     <div className="header">
       <nav className="bg-white px-6 py-[10px] flex items-center justify-between shadow-sm border-b border-gray-300">
-        {/* Hamburger Menu Buttonv */}
+        {/* Hamburger Menu Button */}
         <button
           id="nav-toggle"
           onClick={toggleSidebar} // Toggle sidebar on click
