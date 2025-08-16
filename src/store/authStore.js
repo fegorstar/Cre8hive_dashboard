@@ -1,73 +1,94 @@
+// src/store/authStore.js
 import { create } from 'zustand';
 import axios from 'axios';
-import { BASE_URL } from '../config'; // Import the base URL from the config file
+import { BASE_URL } from '../config';
 
-// Zustand store for managing authentication state
-const useAuthStore = create((set) => ({
-  isAuthenticated: false,  // Initially not authenticated
-  user: null,              // User info will be set after login
-  token: localStorage.getItem('authToken') || null,  // Load token from localStorage if available
+// Helper: set/clear global Authorization header for axios
+const setAuthHeader = (token) => {
+  if (token) {
+    axios.defaults.baseURL = BASE_URL;
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  } else {
+    delete axios.defaults.headers.common['Authorization'];
+  }
+};
 
-  // Method for login
-  login: async (email, password) => {
+const useAuthStore = create((set, get) => ({
+  // ---------- STATE ----------
+  isAuthenticated: false,
+  user: null,
+  token: localStorage.getItem('authToken') || null,
+
+  // ---------- ACTIONS ----------
+  // Initialize from localStorage (called at the bottom on store init)
+  loadStoredAuthData: () => {
+    const token = localStorage.getItem('authToken');
+    const rawUser = localStorage.getItem('user');
+
     try {
-      const response = await axios.post(`${BASE_URL}/admin/login`, { email, password });
-      const { access_token, admin } = response.data; // Destructure response to get access_token and admin data
+      const user =
+        rawUser && rawUser !== 'undefined' ? JSON.parse(rawUser) : null;
 
-      // Update the store with the user data and token
-      set({
-        isAuthenticated: true,
-        user: admin,  // Save the full user object (not just first_name)
-        token: access_token,
-      });
-
-      // Save token and user information to localStorage
-      localStorage.setItem('authToken', access_token);
-      localStorage.setItem('user', JSON.stringify(admin));  // Store entire user object
-
-      return { message: 'Login successful' };
-    } catch (error) {
-      console.error('Error logging in:', error);
-      throw error;  // Rethrow the error to handle it in the component
+      if (token && user) {
+        set({ isAuthenticated: true, user, token });
+        setAuthHeader(token);
+      } else if (token && !user) {
+        // If only token exists, still allow (some endpoints might fetch user later)
+        set({ isAuthenticated: true, user: null, token });
+        setAuthHeader(token);
+      } else {
+        set({ isAuthenticated: false, user: null, token: null });
+        setAuthHeader(null);
+      }
+    } catch {
+      // Corrupt user in storage; clear it and continue with token-only if present
+      localStorage.removeItem('user');
+      if (token) {
+        set({ isAuthenticated: true, user: null, token });
+        setAuthHeader(token);
+      } else {
+        set({ isAuthenticated: false, user: null, token: null });
+        setAuthHeader(null);
+      }
     }
   },
 
-  // Method for logging out
+  // Login with email/password
+  login: async (email, password) => {
+    const res = await axios.post(`${BASE_URL}/admin/login`, { email, password });
+    const { access_token, admin } = res.data;
+
+    // Persist
+    localStorage.setItem('authToken', access_token);
+    localStorage.setItem('user', JSON.stringify(admin ?? null));
+
+    // Set global header for subsequent requests
+    setAuthHeader(access_token);
+
+    // Update store
+    set({
+      isAuthenticated: true,
+      user: admin ?? null,
+      token: access_token,
+    });
+
+    return { message: 'Login successful' };
+  },
+
+  // Logout everywhere
   logout: () => {
     try {
-      // Remove token and user from localStorage
       localStorage.removeItem('authToken');
       localStorage.removeItem('user');
-      
-      // Reset Zustand store
-      set({
-        isAuthenticated: false,
-        user: null,
-        token: null,
-      });
-
-      console.log('Logout successful');
+      set({ isAuthenticated: false, user: null, token: null });
+      setAuthHeader(null);
     } catch (error) {
       console.error('Error logging out:', error);
     }
   },
-
-  // Load stored authentication data from localStorage when the app starts
-  loadStoredAuthData: () => {
-    const token = localStorage.getItem('authToken');
-    const user = localStorage.getItem('user'); // Get the entire user object
-
-    if (token && user) {
-      set({
-        isAuthenticated: true,
-        user: JSON.parse(user),  // Parse the user data and store the full object
-        token,
-      });
-    }
-  },
 }));
 
-// Load stored auth data when the store is initialized
+// Run loader on store init so refresh keeps you logged in
 useAuthStore.getState().loadStoredAuthData();
 
 export default useAuthStore;

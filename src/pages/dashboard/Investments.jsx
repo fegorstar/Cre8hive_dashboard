@@ -97,26 +97,7 @@ const Investments = () => {
               <p className="inline-block px-6 text-lg leading-5 font-semibold">Investments</p>
             </div>
 
-            {/* Cards Section */}
-            <div className="card h-full p-6 bg-white shadow-md rounded-lg mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Card 1: Investment Value */}
-              <div className="card h-full p-6 bg-white shadow-md rounded-lg flex flex-col items-center">
-                <p className="text-shadow-indigo-50 text-sm">Investment Value</p>
-                <h3 className="font-bold mt-2 text-lg">{investments.investmentValue}</h3>
-              </div>
-
-              {/* Card 2: Curated Investment */}
-              <div className="card h-full p-6 bg-white shadow-md rounded-lg flex flex-col items-center">
-                <p className="text-shadow-indigo-50 text-sm">Curated Investments</p>
-                <h3 className="font-bold mt-2 text-lg">{investments.curatedInvestment}</h3>
-              </div>
-
-              {/* Card 3: Number of Investors */}
-              <div className="card h-full p-6 bg-white shadow-md rounded-lg flex flex-col items-center">
-                <p className="text-shadow-indigo-50 text-sm">Number of Investors</p>
-                <h3 className="font-bold mt-2 text-lg">{investments.numOfInvestors}</h3>
-              </div>
-            </div>
+           
 
             {/* Tab for Active/Closed Investments */}
             <div className="flex space-x-4 mb-6 justify-between">

@@ -1,49 +1,75 @@
-import React from 'react'; // Ensure React is imported
+// src/router/index.js
+import React from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
-// Import your components
 import Login from '../pages/auth/Login';
 import Dashboard from '../pages/dashboard/Dashboard';
-import Investments from '../pages/dashboard/Investments'; // Import the new Investments page
+import Investments from '../pages/dashboard/Investments';
 import Reports from '../pages/dashboard/Reports';
-import useAuthStore from '../store/authStore'; // Zustand store for authentication state
+import ServiceCategories from '../pages/dashboard/ServiceCategories';
+import Creators from '../pages/dashboard/Creators';
+import Members from '../pages/dashboard/Members'; // ✅ NEW
 
-// ProtectedRoute component
+import useAuthStore from '../store/authStore';
+
 const ProtectedRoute = ({ children }) => {
-  const { isAuthenticated } = useAuthStore((state) => state); // Check authentication from Zustand store
-  if (!isAuthenticated) {
-    // Redirect them to the login page if not authenticated
-    return <Navigate to="/" replace />;
-  }
+  const { isAuthenticated } = useAuthStore((s) => s);
+  if (!isAuthenticated) return <Navigate to="/" replace />;
   return children;
 };
 
 const router = createBrowserRouter([
-  { path: '/', element: <Login /> }, // Login page (public route)
-  { 
-    path: '/dashboard', 
+  { path: '/', element: <Login /> },
+  {
+    path: '/dashboard',
     element: (
       <ProtectedRoute>
         <Dashboard />
       </ProtectedRoute>
-    ) 
+    ),
   },
-  { 
-    path: '/investments', 
+  {
+    path: '/investments',
     element: (
       <ProtectedRoute>
         <Investments />
       </ProtectedRoute>
-    ) 
+    ),
   },
-  { 
-    path: '/reports', 
+  {
+    path: '/reports',
     element: (
       <ProtectedRoute>
         <Reports />
       </ProtectedRoute>
-    ) 
+    ),
   },
+  {
+    path: '/service-categories',
+    element: (
+      <ProtectedRoute>
+        <ServiceCategories />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/creators',
+    element: (
+      <ProtectedRoute>
+        <Creators />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/members', // ✅ NEW ROUTE
+    element: (
+      <ProtectedRoute>
+        <Members />
+      </ProtectedRoute>
+    ),
+  },
+  // optional catch-all:
+  // { path: '*', element: <Navigate to="/dashboard" replace /> },
 ]);
 
 export default router;
