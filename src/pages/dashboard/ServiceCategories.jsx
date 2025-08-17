@@ -3,9 +3,12 @@
 // - Per-tab hydration loaders (no data flash): show loader first, then tables
 // - Toast component (no external lib), clean UI
 // - Dates & robust store usage retained
+// - Modal closes on overlay/outside click and Esc
+// - Inputs/selects: smaller, lighter placeholders
+// - NEW: Table footer with "Showing X–Y of Z" (left) and pagination (right) for Categories & Sub-categories
 // - NEW: Modal footer button shows a loader ("Saving…") during create/update
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -125,24 +128,46 @@ const ThreeDotsMenu = ({ items }) => {
   );
 };
 
+/* ----------- Shared input styles (small, light placeholders) ----------- */
+const inputBase =
+  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm placeholder:text-xs placeholder:font-light placeholder:text-gray-400";
+const selectBase =
+  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm";
+
+/* ---------------- Modal: overlay/outside/Esc to close ---------------- */
 const Modal = ({ open, title, onClose, children, footer }) => {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop (overlay click closes) */}
       <div
-        className={`fixed inset-0 bg-black/30 transition-opacity ${
+        className={`fixed inset-0 z-30 bg-black/30 transition-opacity ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
+        aria-hidden={!open}
       />
-      {/* Panel */}
+      {/* Wrapper (outside click closes) */}
       <div
-        className={`fixed inset-0 flex items-center justify-center p-4 z-30 ${
+        className={`fixed inset-0 z-40 flex items-center justify-center p-4 transition ${
           open ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         aria-hidden={!open}
+        onClick={onClose}
       >
-        <div className="w-full max-w-md bg-white rounded-lg shadow-xl">
+        {/* Panel (stop inside clicks) */}
+        <div
+          className="w-full max-w-md bg-white rounded-lg shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
             <h3 className="text-base font-semibold">{title}</h3>
             <button className="p-2 rounded hover:bg-gray-100" onClick={onClose} aria-label="Close">
@@ -159,6 +184,7 @@ const Modal = ({ open, title, onClose, children, footer }) => {
   );
 };
 
+/* ---------------- Forms ---------------- */
 const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
   const [name, setName] = useState(record?.name ?? "");
   const [parentCategoryId, setParentCategoryId] = useState(
@@ -192,7 +218,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
           value={name}
           disabled={isView}
           onChange={(e) => setName(e.target.value)}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+          className={inputBase}
           placeholder="e.g. Professional Services"
           required
         />
@@ -205,7 +231,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
             disabled={isView}
             value={parentCategoryId || ""}
             onChange={(e) => setParentCategoryId(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+            className={selectBase}
             required
           >
             <option value="" disabled>
@@ -225,10 +251,21 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
   );
 };
 
-const CategoriesTable = ({ rows, onView, onEdit }) => {
+/* ---------------- Tables with footer (showing + pagination) ---------------- */
+const TableShell = ({ children, footerLeft, footerRight }) => (
+  <div className="rounded-xl border border-gray-200 overflow-hidden">
+    <div className="overflow-auto">{children}</div>
+    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-white border-t border-gray-200">
+      <div className="text-sm text-gray-600">{footerLeft}</div>
+      <div>{footerRight}</div>
+    </div>
+  </div>
+);
+
+const CategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
   return (
-    <div className="overflow-auto rounded-xl border border-gray-200">
+    <TableShell footerLeft={footerLeft} footerRight={footerRight}>
       <table className="w-full text-sm">
         <thead className="bg-gray-100">
           <tr>
@@ -263,14 +300,14 @@ const CategoriesTable = ({ rows, onView, onEdit }) => {
           )}
         </tbody>
       </table>
-    </div>
+    </TableShell>
   );
 };
 
-const SubcategoriesTable = ({ rows, onView, onEdit }) => {
+const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
   return (
-    <div className="overflow-auto rounded-xl border border-gray-200">
+    <TableShell footerLeft={footerLeft} footerRight={footerRight}>
       <table className="w-full text-sm">
         <thead className="bg-gray-100">
           <tr>
@@ -309,7 +346,7 @@ const SubcategoriesTable = ({ rows, onView, onEdit }) => {
           )}
         </tbody>
       </table>
-    </div>
+    </TableShell>
   );
 };
 
@@ -345,6 +382,11 @@ const ServiceCategories = () => {
   const [catsHydrated, setCatsHydrated] = useState(false);
   const [subsHydrated, setSubsHydrated] = useState(false);
 
+  // Pagination state (client-side) per tab
+  const perPage = 10;
+  const [catsPage, setCatsPage] = useState(1);
+  const [subsPage, setSubsPage] = useState(1);
+
   // Initial categories load with hydration control
   useEffect(() => {
     (async () => {
@@ -359,6 +401,14 @@ const ServiceCategories = () => {
       setActiveParent(safeCategories[0].id);
     }
   }, [tab, activeParent, safeCategories]);
+
+  // Reset pages when switching tab/parent
+  useEffect(() => {
+    setCatsPage(1);
+  }, [catsHydrated]);
+  useEffect(() => {
+    setSubsPage(1);
+  }, [activeParent, subsHydrated, tab]);
 
   // Load subcategories when parent changes (with hydration control)
   useEffect(() => {
@@ -375,6 +425,57 @@ const ServiceCategories = () => {
     if (!activeParent) return [];
     return Array.isArray(subCategories) ? subCategories : [];
   }, [subCategories, activeParent]);
+
+  // Slice helpers
+  const catsTotal = safeCategories.length;
+  const catsTotalPages = Math.max(1, Math.ceil(catsTotal / perPage));
+  const catsStart = catsTotal === 0 ? 0 : (catsPage - 1) * perPage + 1;
+  const catsEnd = catsTotal === 0 ? 0 : Math.min(catsPage * perPage, catsTotal);
+  const catsVisible = useMemo(
+    () => safeCategories.slice((catsPage - 1) * perPage, catsPage * perPage),
+    [safeCategories, catsPage]
+  );
+
+  const subsTotal = subRows.length;
+  const subsTotalPages = Math.max(1, Math.ceil(subsTotal / perPage));
+  const subsStart = subsTotal === 0 ? 0 : (subsPage - 1) * perPage + 1;
+  const subsEnd = subsTotal === 0 ? 0 : Math.min(subsPage * perPage, subsTotal);
+  const subsVisible = useMemo(
+    () => subRows.slice((subsPage - 1) * perPage, subsPage * perPage),
+    [subRows, subsPage]
+  );
+
+  // Footer makers
+  const makeFooterLeft = (total, start, end) =>
+    total === 0
+      ? "No records"
+      : `Showing ${start}–${end} of ${total} record${total > 1 ? "s" : ""}`;
+
+  const makeFooterRight = (page, totalPages, setPage) => (
+    <div className="flex items-center gap-2">
+      <button
+        disabled={page <= 1}
+        onClick={() => setPage((p) => Math.max(1, p - 1))}
+        className={`px-3 py-1.5 rounded-lg border ${
+          page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+        }`}
+      >
+        Prev
+      </button>
+      <span className="text-sm text-gray-600">
+        Page {page} / {totalPages}
+      </span>
+      <button
+        disabled={page >= totalPages}
+        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+        className={`px-3 py-1.5 rounded-lg border ${
+          page >= totalPages ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+        }`}
+      >
+        Next
+      </button>
+    </div>
+  );
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -441,7 +542,7 @@ const ServiceCategories = () => {
         }
       }
 
-      // Refresh lists (no extra UI spinner; hydration flags keep the UI stable)
+      // Refresh lists
       await fetchCategories?.();
       if (modalType === "subcategory") {
         const pid = payload.parentCategoryId || modalRecord?.parentCategoryId || activeParent;
@@ -488,7 +589,7 @@ const ServiceCategories = () => {
             {/* Tabs + Create */}
             <div className="mb-4">
               <div className="flex items-center justify-between">
-                <Tabs value={tab} onChange={setTab} />
+                <Tabs value={tab} onChange={(key) => { setTab(key); }} />
                 <div className="pl-4 py-2">
                   {tab === "categories" ? (
                     <button
@@ -518,7 +619,7 @@ const ServiceCategories = () => {
                 <select
                   value={activeParent || ""}
                   onChange={(e) => setActiveParent(e.target.value)}
-                  className="rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+                  className={selectBase}
                 >
                   {safeCategories.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -536,9 +637,11 @@ const ServiceCategories = () => {
                 <CenterLoader />
               ) : tab === "categories" ? (
                 <CategoriesTable
-                  rows={safeCategories}
+                  rows={catsVisible}
                   onView={(row) => openView("category", row)}
                   onEdit={(row) => openEdit("category", row)}
+                  footerLeft={makeFooterLeft(catsTotal, catsStart, catsEnd)}
+                  footerRight={makeFooterRight(catsPage, catsTotalPages, setCatsPage)}
                 />
               ) : null}
 
@@ -547,9 +650,11 @@ const ServiceCategories = () => {
                 <CenterLoader />
               ) : tab === "subcategories" ? (
                 <SubcategoriesTable
-                  rows={subRows}
+                  rows={subsVisible}
                   onView={(row) => openView("subcategory", row)}
                   onEdit={(row) => openEdit("subcategory", row)}
+                  footerLeft={makeFooterLeft(subsTotal, subsStart, subsEnd)}
+                  footerRight={makeFooterRight(subsPage, subsTotalPages, setSubsPage)}
                 />
               ) : null}
             </div>

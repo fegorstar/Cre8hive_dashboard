@@ -1,11 +1,14 @@
 // src/pages/dashboard/Creators.jsx
-// - Search: icon on RIGHT, perfectly centered
-// - Status filter: uses normalized backend values
-// - Name, Gender, NIN columns; Status after Updated
-// - Modal: closes on overlay click, wrapper click, and Esc
-// - Status toggle: calls PUT /admin/creator/:id with {status}
+// Updates:
+// - Search filters the TABLE; inline "No results…" row when empty.
+// - Footer: bottom-left shows "Showing X–Y of Z records" (respects q/filter); bottom-right has pagination.
+// - Search width preserved (w-72).
+// - Placeholders small + light everywhere.
+// - View modal is read-only, with image thumbnail + Open/Copy for URLs.
+// - Modal closes on overlay/outside click and Esc.
+// - General cleanup + comments.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 import Sidebar from "../../components/layout/Sidebar";
@@ -13,9 +16,18 @@ import Navbar from "../../components/layout/Navbar";
 import Footer from "../../components/layout/Footer";
 
 import useCreatorsStore from "../../store/CreatorsStore";
-import { FiMoreVertical, FiX, FiSearch, FiUserPlus } from "react-icons/fi";
+import {
+  FiMoreVertical,
+  FiX,
+  FiSearch,
+  FiUserPlus,
+  FiExternalLink,
+  FiCopy,
+} from "react-icons/fi";
 
-/* Toast (local) */
+/* ===========================
+   Toast (local)
+   =========================== */
 const Toast = ({ toasts, remove }) => (
   <div className="fixed top-4 right-4 z-[100] space-y-2">
     {toasts.map((t) => (
@@ -57,7 +69,9 @@ const useToast = () => {
   return { toasts, add, remove };
 };
 
-/* Loaders */
+/* ===========================
+   Loaders
+   =========================== */
 const Spinner = ({ className = "" }) => (
   <span
     className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent align-[-0.125em] text-white ${className}`}
@@ -75,7 +89,9 @@ const CenterLoader = ({ label = "Loading…" }) => (
   </div>
 );
 
-/* 3-dots menu */
+/* ===========================
+   3-dots menu
+   =========================== */
 const ThreeDotsMenu = ({ items }) => {
   const [open, setOpen] = useState(false);
   const safeItems = Array.isArray(items) ? items : [];
@@ -110,14 +126,30 @@ const ThreeDotsMenu = ({ items }) => {
   );
 };
 
-/* Helpers for status mapping */
+/* ===========================
+   Helpers
+   =========================== */
 const toNormStatus = (raw) => {
   const v = String(raw ?? "").trim().toLowerCase();
   if (v === "1" || v === "true" || v === "active") return "active";
   return "inactive";
 };
 
-/* Toggle + Status pill */
+const isUrl = (v) => {
+  if (!v || typeof v !== "string") return false;
+  try {
+    new URL(v, window.location.origin);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isImageUrl = (v) => /\.(png|jpe?g|gif|webp|svg)$/i.test(String(v || ""));
+
+/* ===========================
+   Toggle + Status pill
+   =========================== */
 const Toggle = ({ checked, onChange }) => (
   <button
     type="button"
@@ -139,7 +171,7 @@ const StatusPill = ({ value = "inactive" }) => {
   const active = String(value).toLowerCase() === "active";
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
         active
           ? "bg-green-50 text-green-700 border border-green-200"
           : "bg-gray-50 text-gray-700 border border-gray-200"
@@ -150,20 +182,20 @@ const StatusPill = ({ value = "inactive" }) => {
   );
 };
 
-/* Modal — closes on outside click + Esc */
+/* ===========================
+   Modal — overlay/outside/Esc to close
+   =========================== */
 const Modal = ({ open, title, onClose, children, footer }) => {
   useEffect(() => {
     if (!open) return;
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose?.();
-    };
+    const onKey = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
   return (
     <>
-      {/* Overlay that closes on click */}
+      {/* Overlay (clicking closes) */}
       <div
         className={`fixed inset-0 z-40 bg-black/30 transition-opacity ${
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
@@ -171,8 +203,7 @@ const Modal = ({ open, title, onClose, children, footer }) => {
         onClick={onClose}
         aria-hidden={!open}
       />
-
-      {/* Wrapper also closes on click (outside card) */}
+      {/* Wrapper (click outside card closes) */}
       <div
         className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition ${
           open ? "opacity-100" : "opacity-0 pointer-events-none"
@@ -180,7 +211,7 @@ const Modal = ({ open, title, onClose, children, footer }) => {
         aria-hidden={!open}
         onClick={onClose}
       >
-        {/* Card — stop propagation so clicks inside do NOT close */}
+        {/* Card (stop propagation so inside clicks don't close) */}
         <div
           className="w-full max-w-md bg-white rounded-lg shadow-xl"
           onClick={(e) => e.stopPropagation()}
@@ -205,16 +236,139 @@ const Modal = ({ open, title, onClose, children, footer }) => {
   );
 };
 
-/* Form */
+/* ===========================
+   Shared input styles
+   - placeholders small & light
+   =========================== */
+const inputBase =
+  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm placeholder:text-xs placeholder:font-light placeholder:text-gray-400";
+const selectBase =
+  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm";
+
+/* ===========================
+   Read-only "View Details"
+   =========================== */
+const CopyBtn = ({ value, small }) => {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] ${
+        small ? "" : "ml-2"
+      } border-gray-300 hover:bg-gray-50`}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(String(value || ""));
+          setDone(true);
+          setTimeout(() => setDone(false), 1200);
+        } catch {}
+      }}
+      title="Copy"
+    >
+      <FiCopy className="w-3.5 h-3.5" />
+      {done ? "Copied" : "Copy"}
+    </button>
+  );
+};
+
+const LinkField = ({ url }) => {
+  if (!isUrl(url)) return <span className="text-gray-700 text-[13px] break-all">—</span>;
+  const href = String(url);
+
+  const openBtn = (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 text-[11px]"
+      title="Open in new tab"
+    >
+      <FiExternalLink className="w-3.5 h-3.5" />
+      Open
+    </a>
+  );
+
+  if (isImageUrl(href)) {
+    return (
+      <div className="flex items-center gap-2">
+        <a href={href} target="_blank" rel="noopener noreferrer" className="shrink-0">
+          <img
+            src={href}
+            alt="preview"
+            className="h-14 w-14 object-cover rounded border border-gray-200"
+          />
+        </a>
+        <div className="flex items-center gap-2">
+          {openBtn}
+          <CopyBtn value={href} small />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="max-w-[14rem] truncate text-[12px] text-gray-700" title={href}>
+        {href}
+      </span>
+      {openBtn}
+      <CopyBtn value={href} small />
+    </div>
+  );
+};
+
+const Field = ({ label, children }) => (
+  <div className="space-y-1">
+    <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
+    <div className="text-[13px] text-gray-800">{children ?? <span>—</span>}</div>
+  </div>
+);
+
+const CreatorDetailsView = ({ record }) => {
+  const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+  return (
+    <div className="space-y-4">
+      {/* Top meta */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="text-[13px] font-medium">{dash(record?.name)}</div>
+          <StatusPill value={toNormStatus(record?.status)} />
+        </div>
+        <div className="text-[12px] text-gray-500">ID: {dash(record?.id)}</div>
+      </div>
+
+      {/* Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Field label="Gender">{dash(record?.gender)}</Field>
+        <Field label="BVN">
+          <span className="text-[13px]">{dash(record?.bvn)}</span>
+          {record?.bvn ? <CopyBtn value={record.bvn} /> : null}
+        </Field>
+        <Field label="NIN">
+          <span className="text-[13px]">{dash(record?.nin)}</span>
+          {record?.nin ? <CopyBtn value={record.nin} /> : null}
+        </Field>
+        <Field label="ID Type">{dash(record?.id_type)}</Field>
+        <Field label="Copy of ID (value)"><LinkField url={record?.copy_id_type} /></Field>
+        <Field label="Copy Utility Bill (value)"><LinkField url={record?.copy_utility_bill} /></Field>
+        <Field label="Utility Bill Type">{dash(record?.copy_utility_bill_type)}</Field>
+        <Field label="Joined">{dash(record?.createdAtReadable)}</Field>
+        <Field label="Updated">{dash(record?.updatedAtReadable)}</Field>
+      </div>
+    </div>
+  );
+};
+
+/* ===========================
+   Create/Edit Form
+   =========================== */
 const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
   const [gender, setGender] = useState(record?.gender ?? "male");
   const [bvn, setBvn] = useState(record?.bvn ?? "");
   const [nin, setNin] = useState(record?.nin ?? "");
   const [idType, setIdType] = useState(record?.id_type ?? "national_id");
   const [copyIdType, setCopyIdType] = useState(record?.copy_id_type ?? "");
-  const [copyUtilityBill, setCopyUtilityBill] = useState(
-    record?.copy_utility_bill ?? ""
-  );
+  const [copyUtilityBill, setCopyUtilityBill] = useState(record?.copy_utility_bill ?? "");
   const [copyUtilityBillType, setCopyUtilityBillType] = useState(
     record?.copy_utility_bill_type ?? ""
   );
@@ -230,6 +384,8 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
     setCopyUtilityBill(record?.copy_utility_bill ?? "");
     setCopyUtilityBillType(record?.copy_utility_bill_type ?? "");
   }, [record]);
+
+  if (isView) return <CreatorDetailsView record={record} />;
 
   return (
     <form
@@ -254,7 +410,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             disabled={isView}
             value={gender}
             onChange={(e) => setGender(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+            className={selectBase}
           >
             <option value="male">male</option>
             <option value="female">female</option>
@@ -268,7 +424,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             value={bvn}
             disabled={isView}
             onChange={(e) => setBvn(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+            className={inputBase}
             placeholder="22344760934"
             required
           />
@@ -281,7 +437,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             value={nin}
             disabled={isView}
             onChange={(e) => setNin(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+            className={inputBase}
             placeholder="23298489129"
             required
           />
@@ -293,7 +449,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             disabled={isView}
             value={idType}
             onChange={(e) => setIdType(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
+            className={selectBase}
           >
             <option value="national_id">national_id</option>
             <option value="driver_license">driver_license</option>
@@ -309,8 +465,8 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             value={copyIdType}
             disabled={isView}
             onChange={(e) => setCopyIdType(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
-            placeholder="wdmoklvwe"
+            className={inputBase}
+            placeholder="https://… or value"
             required
           />
         </div>
@@ -322,8 +478,8 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             value={copyUtilityBill}
             disabled={isView}
             onChange={(e) => setCopyUtilityBill(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
-            placeholder="wejowmkle"
+            className={inputBase}
+            placeholder="https://… or value"
             required
           />
         </div>
@@ -335,8 +491,8 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
             value={copyUtilityBillType}
             disabled={isView}
             onChange={(e) => setCopyUtilityBillType(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490]"
-            placeholder="x"
+            className={inputBase}
+            placeholder="e.g., PHCN"
             required
           />
         </div>
@@ -347,80 +503,104 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
   );
 };
 
-/* Table */
-const CreatorsTable = ({ rows, onView, onEdit, onToggle, togglingId }) => {
+/* ===========================
+   Table
+   - If no rows AND q present -> "No results for 'q'"
+   - If no rows AND no q -> "No creators yet."
+   - Footer: left total; right pagination
+   =========================== */
+const CreatorsTable = ({
+  rows,
+  q,
+  onView,
+  onEdit,
+  onToggle,
+  togglingId,
+  footerLeft,  // text node
+  footerRight, // controls node
+}) => {
   const safeRows = Array.isArray(rows) ? rows : [];
   const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+  const emptyText = q ? `No results found for “${q}”` : "No creators yet.";
 
   return (
-    <div className="overflow-auto rounded-xl border border-gray-200">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-100">
-          <tr>
-            <th className="text-left px-4 py-3 font-semibold">ID</th>
-            <th className="text-left px-4 py-3 font-semibold">Name</th>
-            <th className="text-left px-4 py-3 font-semibold">Gender</th>
-            <th className="text-left px-4 py-3 font-semibold">NIN</th>
-            <th className="text-left px-4 py-3 font-semibold">Joined</th>
-            <th className="text-left px-4 py-3 font-semibold">Updated</th>
-            <th className="text-left px-4 py-3 font-semibold">Status</th>
-            <th className="text-right px-4 py-3 font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {safeRows.map((row) => {
-            const isActive = toNormStatus(row.status) === "active";
-            return (
-              <tr key={row.id} className="border-t border-gray-100">
-                <td className="px-4 py-3">{dash(row.id)}</td>
-                <td className="px-4 py-3">{dash(row.name)}</td>
-                <td className="px-4 py-3 capitalize">{dash(row.gender)}</td>
-                <td className="px-4 py-3">{dash(row.nin)}</td>
-                <td className="px-4 py-3">{dash(row.createdAtReadable)}</td>
-                <td className="px-4 py-3">{dash(row.updatedAtReadable)}</td>
+    <div className="rounded-xl border border-gray-200 overflow-hidden">
+      <div className="overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="text-left px-4 py-3 font-semibold">ID</th>
+              <th className="text-left px-4 py-3 font-semibold">Name</th>
+              <th className="text-left px-4 py-3 font-semibold">Gender</th>
+              <th className="text-left px-4 py-3 font-semibold">NIN</th>
+              <th className="text-left px-4 py-3 font-semibold">Joined</th>
+              <th className="text-left px-4 py-3 font-semibold">Updated</th>
+              <th className="text-left px-4 py-3 font-semibold">Status</th>
+              <th className="text-right px-4 py-3 font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {safeRows.map((row) => {
+              const isActive = toNormStatus(row.status) === "active";
+              return (
+                <tr key={row.id} className="border-t border-gray-100">
+                  <td className="px-4 py-3">{dash(row.id)}</td>
+                  <td className="px-4 py-3">{dash(row.name)}</td>
+                  <td className="px-4 py-3 capitalize">{dash(row.gender)}</td>
+                  <td className="px-4 py-3">{dash(row.nin)}</td>
+                  <td className="px-4 py-3">{dash(row.createdAtReadable)}</td>
+                  <td className="px-4 py-3">{dash(row.updatedAtReadable)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <StatusPill value={toNormStatus(row.status)} />
+                      <Toggle checked={isActive} onChange={() => onToggle(row)} />
+                      {togglingId === row.id && (
+                        <span className="inline-flex items-center text-xs text-gray-500">
+                          <Spinner className="!text-gray-500 mr-1" /> updating…
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <ThreeDotsMenu
+                      items={[
+                        { label: "View", onClick: () => onView(row) },
+                        { label: "Edit", onClick: () => onEdit(row) },
+                      ]}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
 
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <StatusPill value={toNormStatus(row.status)} />
-                    <Toggle checked={isActive} onChange={() => onToggle(row)} />
-                    {togglingId === row.id && (
-                      <span className="inline-flex items-center text-xs text-gray-500">
-                        <Spinner className="!text-gray-500 mr-1" /> updating…
-                      </span>
-                    )}
-                  </div>
-                </td>
-
-                <td className="px-4 py-3 text-right">
-                  <ThreeDotsMenu
-                    items={[
-                      { label: "View", onClick: () => onView(row) },
-                      { label: "Edit", onClick: () => onEdit(row) },
-                    ]}
-                  />
+            {safeRows.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
+                  {emptyText}
                 </td>
               </tr>
-            );
-          })}
+            )}
+          </tbody>
+        </table>
+      </div>
 
-          {safeRows.length === 0 && (
-            <tr>
-              <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
-                No creators yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      {/* Footer bar */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-white border-t border-gray-200">
+        <div className="text-sm text-gray-600">{footerLeft}</div>
+        <div>{footerRight}</div>
+      </div>
     </div>
   );
 };
 
-/* Page */
+/* ===========================
+   Page
+   =========================== */
 const Creators = () => {
   const navigate = useNavigate();
   const toast = useToast();
 
+  // Auth guard
   useEffect(() => {
     const token = localStorage.getItem("authToken");
     if (!token) navigate("/login");
@@ -436,6 +616,7 @@ const Creators = () => {
 
   const [hydrated, setHydrated] = useState(false);
 
+  // Search/filter/page (server-driven); debounced typing; Enter = instant
   const [q, setQ] = useState("");
   const [status, setStatus] = useState(""); // 'active' | 'inactive' | ''
   const [page, setPage] = useState(1);
@@ -444,16 +625,16 @@ const Creators = () => {
   const [submitting, setSubmitting] = useState(false);
   const [togglingId, setTogglingId] = useState(null);
 
-  // initial fetch
+  // Initial fetch
   useEffect(() => {
     (async () => {
-      await fetchCreators?.({ page, per_page: perPage, q, status });
+      await fetchCreators?.({ page: 1, per_page: perPage, q: "", status: "" });
       setHydrated(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // reactive fetch
+  // Debounced reactive fetch on q/status/page
   useEffect(() => {
     const t = setTimeout(() => {
       fetchCreators?.({ page, per_page: perPage, q, status });
@@ -461,12 +642,21 @@ const Creators = () => {
     return () => clearTimeout(t);
   }, [page, q, status, fetchCreators]);
 
-  const rows = useMemo(
-    () => (Array.isArray(creators) ? creators : []),
-    [creators]
+  // Enter = immediate search and reset to page 1
+  const onSearchEnter = useCallback(
+    (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        setPage(1);
+        fetchCreators?.({ page: 1, per_page: perPage, q, status });
+      }
+    },
+    [q, status, fetchCreators]
   );
 
-  /* Build status options from backend data (normalized) */
+  const rows = useMemo(() => (Array.isArray(creators) ? creators : []), [creators]);
+
+  // Status filter options built from data
   const statusSet = useMemo(() => {
     const s = new Set();
     rows.forEach((r) => s.add(toNormStatus(r.status)));
@@ -481,9 +671,9 @@ const Creators = () => {
     return ["active", "inactive"].filter((o) => opts.includes(o));
   }, [statusSet]);
 
-  // modal state
+  // Modal state
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create");
+  const [modalMode, setModalMode] = useState("create"); // create | edit | view
   const [modalRecord, setModalRecord] = useState(null);
 
   const openCreate = () => {
@@ -503,6 +693,7 @@ const Creators = () => {
   };
   const closeModal = () => setModalOpen(false);
 
+  // Create handler
   const handleSubmit = async (payload) => {
     try {
       setSubmitting(true);
@@ -526,10 +717,11 @@ const Creators = () => {
     }
   };
 
+  // Toggle status handler
   const handleToggle = async (row) => {
     try {
       setTogglingId(row.id);
-      await toggleCreatorStatus?.(row.id); // uses PUT /admin/creator/:id { status }
+      await toggleCreatorStatus?.(row.id); // PUT /admin/creator/:id { status }
       toast.add({ type: "success", title: "Status updated" });
       await fetchCreators?.({ page, per_page: perPage, q, status });
     } catch (e) {
@@ -544,6 +736,7 @@ const Creators = () => {
     }
   };
 
+  // Titles
   const modalTitle =
     modalMode === "create"
       ? "Create Creator"
@@ -551,10 +744,44 @@ const Creators = () => {
       ? "Edit Creator"
       : "View Creator";
 
-  const total = pagination?.total || rows.length;
-  const totalPages = Math.max(
-    1,
-    Math.ceil((pagination?.total || 0) / (pagination?.per_page || perPage))
+  // Pagination math (using API pagination if provided)
+  const total = pagination?.total ?? rows.length ?? 0;
+  const per = pagination?.per_page || perPage;
+  const totalPages = Math.max(1, Math.ceil((pagination?.total || 0) / per));
+  const startIdx = total === 0 ? 0 : (page - 1) * per + 1;
+  const endIdx = total === 0 ? 0 : Math.min(page * per, total);
+
+  // Footer (left text)
+  const footerLeftText =
+    total === 0
+      ? (q ? `No results for “${q}”` : "No records")
+      : `Showing ${startIdx}–${endIdx} of ${total} record${total > 1 ? "s" : ""}`;
+
+  // Footer (right controls: Prev/Next)
+  const footerRightControls = (
+    <div className="flex items-center gap-2">
+      <button
+        disabled={page <= 1}
+        onClick={() => setPage((p) => Math.max(1, p - 1))}
+        className={`px-3 py-1.5 rounded-lg border ${
+          page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+        }`}
+      >
+        Prev
+      </button>
+      <span className="text-sm text-gray-600">
+        Page {page} / {totalPages}
+      </span>
+      <button
+        disabled={page >= totalPages}
+        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+        className={`px-3 py-1.5 rounded-lg border ${
+          page >= totalPages ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+        }`}
+      >
+        Next
+      </button>
+    </div>
   );
 
   return (
@@ -590,16 +817,18 @@ const Creators = () => {
             {/* Filters */}
             <div className="mb-4 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
               <div className="flex items-center gap-3">
-                {/* Search — icon on RIGHT */}
+                {/* Search — width preserved (w-72) */}
                 <div className="relative">
                   <input
                     value={q}
                     onChange={(e) => {
-                      setPage(1);
-                      setQ(e.target.value);
+                      setPage(1);           // reset to first page when query changes
+                      setQ(e.target.value); // debounced fetch in effect
                     }}
-                    className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-72 text-sm placeholder:text-xs leading-[1.25rem]"
+                    onKeyDown={onSearchEnter} // Enter = instant fetch
+                    className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-48 text-sm placeholder:text-xs leading-[1.25rem]"
                     placeholder="Search creators…"
+                    aria-label="Search creators"
                   />
                   <FiSearch
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4 pointer-events-none"
@@ -607,14 +836,15 @@ const Creators = () => {
                   />
                 </div>
 
-                {/* Status filter — backend normalized */}
+                {/* Status filter — normalized */}
                 <select
                   value={status}
                   onChange={(e) => {
                     setPage(1);
                     setStatus(e.target.value);
                   }}
-                  className="h-10 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] w-48 text-sm"
+                  className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-48 text-sm placeholder:text-xs leading-[1.25rem]"
+                  aria-label="Filter by status"
                 >
                   <option value="">All statuses</option>
                   {statusOptions.map((opt) => (
@@ -625,9 +855,8 @@ const Creators = () => {
                 </select>
               </div>
 
-              <div className="text-sm text-gray-600">
-                {total ? `Total: ${total}` : null}
-              </div>
+              {/* (Right side header space intentionally left blank as requested) */}
+              <div />
             </div>
 
             {/* Table / Loader */}
@@ -636,42 +865,14 @@ const Creators = () => {
             ) : (
               <CreatorsTable
                 rows={rows}
+                q={q}
                 onView={openView}
                 onEdit={openEdit}
                 onToggle={handleToggle}
                 togglingId={togglingId}
+                footerLeft={footerLeftText}
+                footerRight={footerRightControls}
               />
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className={`px-3 py-1.5 rounded-lg border ${
-                    page <= 1
-                      ? "text-gray-400 border-gray-200"
-                      : "border-gray-300 hover:bg-gray-50"
-                  }`}
-                >
-                  Prev
-                </button>
-                <span className="text-sm text-gray-600">
-                  Page {page} / {totalPages}
-                </span>
-                <button
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className={`px-3 py-1.5 rounded-lg border ${
-                    page >= totalPages
-                      ? "text-gray-400 border-gray-200"
-                      : "border-gray-300 hover:bg-gray-50"
-                  }`}
-                >
-                  Next
-                </button>
-              </div>
             )}
           </div>
 
