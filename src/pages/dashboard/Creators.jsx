@@ -836,7 +836,7 @@ const Creators = () => {
                   />
                 </div>
 
-                {/* Status filter — normalized */}
+                {/* Status filter — normalized   */}
                 <select
                   value={status}
                   onChange={(e) => {
