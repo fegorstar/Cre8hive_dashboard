@@ -7,6 +7,7 @@
 // - Adds createdAtReadable / updatedAtReadable (e.g., "28 Jan, 2025")
 // - Persists categories/subCategories in localStorage
 // - Fallback for subcategories to categories[].children when API yields nothing
+// - FIX: categories state now holds **parents only**; subs live under parent.children
 
 import { create } from 'zustand';
 import axios from 'axios';
@@ -59,6 +60,17 @@ const normalizeIds = (it = {}) => ({
     it?.parentCategoryId !== undefined ? Number(it.parentCategoryId) : it?.parentCategoryId,
 });
 
+// Decorate one subcategory (parentName optional)
+const decorateSubcategory = (raw = {}, parentName = undefined) => {
+  const norm = normalizeIds(raw);
+  return {
+    ...norm,
+    parentName,
+    createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
+    updatedAtReadable: formatReadableDate(norm.updated_at || norm.updatedAt),
+  };
+};
+
 // Decorate one category
 const decorateCategory = (raw = {}) => {
   const norm = normalizeIds(raw);
@@ -72,36 +84,70 @@ const decorateCategory = (raw = {}) => {
   };
 };
 
-// Decorate one subcategory (parentName optional)
-const decorateSubcategory = (raw = {}, parentName = undefined) => {
-  const norm = normalizeIds(raw);
-  return {
-    ...norm,
-    parentName,
-    createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
-    updatedAtReadable: formatReadableDate(norm.updated_at || norm.updatedAt),
-  };
-};
-
 const useServiceCategoriesStore = create((set, get) => ({
   // ===== STATE =====
-  categories: JSON.parse(localStorage.getItem('categories') || '[]'),
-  subCategories: JSON.parse(localStorage.getItem('subCategories') || '[]'),
+  categories: JSON.parse(localStorage.getItem('categories') || '[]'),      // parents-only
+  subCategories: JSON.parse(localStorage.getItem('subCategories') || '[]'),// current parent’s subs
   loading: false,
   error: null,
 
   // ===== ACTIONS =====
 
-  // Fetch all categories
+  // Fetch all categories (parents-only in state; subs attached under .children)
   fetchCategories: async () => {
     set({ loading: true, error: null });
     try {
       const res = await api.get(`/categories`);
       const raw = extractArray(res);
-      const data = raw.map(decorateCategory);
 
-      set({ categories: data, loading: false });
-      localStorage.setItem('categories', JSON.stringify(data));
+      // Normalize all incoming rows first
+      const all = raw.map(normalizeIds);
+
+      // Partition: parents vs subs
+      const parentsRaw = [];
+      const subsRaw = [];
+      for (const item of all) {
+        const hasParent =
+          item.parentCategoryId !== null &&
+          item.parentCategoryId !== undefined &&
+          item.parentCategoryId !== 0;
+        if (hasParent) subsRaw.push(item);
+        else {
+          parentsRaw.push({
+            ...item,
+            children: Array.isArray(item.children) ? item.children.map(normalizeIds) : [],
+          });
+        }
+      }
+
+      // Index parents and merge subs from both: existing nested children + flat subs
+      const parentsMap = new Map(
+        parentsRaw.map((p) => [Number(p.id), { ...p, children: Array.isArray(p.children) ? p.children : [] }])
+      );
+
+      // Merge flat-list children
+      for (const s of subsRaw) {
+        const pid = Number(s.parentCategoryId);
+        const p = parentsMap.get(pid);
+        if (p) {
+          p.children.push(s);
+        }
+      }
+
+      // Decorate parents + their children (ensure parentName is set on children)
+      const decoratedParents = Array.from(parentsMap.values()).map((p) => {
+        const decorated = decorateCategory({
+          ...p,
+          children: Array.isArray(p.children) ? p.children : [],
+        });
+        decorated.children = (decorated.children || []).map((sc) =>
+          decorateSubcategory(sc, decorated.name)
+        );
+        return decorated;
+      });
+
+      set({ categories: decoratedParents, loading: false });
+      localStorage.setItem('categories', JSON.stringify(decoratedParents));
     } catch (error) {
       console.error('Error fetching categories:', error);
       set({ error: error?.response?.data?.message || error.message, loading: false });
@@ -143,10 +189,8 @@ const useServiceCategoriesStore = create((set, get) => ({
 
       let res;
       try {
-        // Primary route (adjust if yours differs)
         res = await api.post(`/categories`, categoryData);
       } catch (err) {
-        // If role/token can’t hit the primary, try an admin-scoped route
         if (err?.response?.status === 401) {
           res = await api.post(`/admin/categories`, categoryData);
         } else {
@@ -158,6 +202,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       const created = decorateCategory(createdRaw);
 
       set((state) => {
+        // parents-only list
         const updated = [...state.categories, created];
         localStorage.setItem('categories', JSON.stringify(updated));
         return { categories: updated, loading: false };
@@ -204,7 +249,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       const created = decorateSubcategory(createdRaw, parentName);
 
       set((state) => {
-        // update categories[].children
+        // update categories[].children for the matched parent
         const categories = (state.categories || []).map((c) =>
           Number(c.id) === Number(payload.parentCategoryId)
             ? { ...c, children: [...(c.children || []), created] }
@@ -252,18 +297,20 @@ const useServiceCategoriesStore = create((set, get) => ({
       const updatedRaw = res?.data?.data || res?.data;
 
       set((state) => {
-        // Update top-level categories
+        // Update parents (top-level categories)
         let categories = (state.categories || []).map((c) =>
           Number(c.id) === Number(id)
             ? {
                 ...c,
                 ...updatedRaw,
                 ...decorateCategory(updatedRaw), // ensures readable dates
+                // Keep existing children if the backend didn’t return them
+                children: Array.isArray(c.children) ? c.children : [],
               }
             : c
         );
 
-        // Update nested subcategories
+        // Update nested subcategories by id
         categories = categories.map((c) => ({
           ...c,
           children: Array.isArray(c.children)
@@ -279,7 +326,7 @@ const useServiceCategoriesStore = create((set, get) => ({
             : c.children,
         }));
 
-        // Update the currently viewed subCategories list
+        // Update current subCategories list
         const subCategories = (state.subCategories || []).map((sc) =>
           Number(sc.id) === Number(id)
             ? { ...sc, ...updatedRaw, ...decorateSubcategory(updatedRaw, sc.parentName) }

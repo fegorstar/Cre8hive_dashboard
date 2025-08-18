@@ -7,8 +7,9 @@
 // - Inputs/selects: smaller, lighter placeholders
 // - NEW: Table footer with "Showing X–Y of Z" (left) and pagination (right) for Categories & Sub-categories
 // - NEW: Modal footer button shows a loader ("Saving…") during create/update
+// - FIX: Categories table now shows **parents only** (no subcategories leaking in)
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -375,6 +376,12 @@ const ServiceCategories = () => {
 
   const safeCategories = Array.isArray(categories) ? categories : [];
 
+  // FIX: only parents in Categories table
+  const parentCategories = useMemo(
+    () => safeCategories.filter((c) => !c.parentCategoryId),
+    [safeCategories]
+  );
+
   const [tab, setTab] = useState("categories");
   const [activeParent, setActiveParent] = useState("");
 
@@ -397,10 +404,10 @@ const ServiceCategories = () => {
 
   // Ensure a default parent is set when going to subcategories
   useEffect(() => {
-    if (tab === "subcategories" && !activeParent && safeCategories.length > 0) {
-      setActiveParent(safeCategories[0].id);
+    if (tab === "subcategories" && !activeParent && parentCategories.length > 0) {
+      setActiveParent(parentCategories[0].id);
     }
-  }, [tab, activeParent, safeCategories]);
+  }, [tab, activeParent, parentCategories]);
 
   // Reset pages when switching tab/parent
   useEffect(() => {
@@ -426,14 +433,14 @@ const ServiceCategories = () => {
     return Array.isArray(subCategories) ? subCategories : [];
   }, [subCategories, activeParent]);
 
-  // Slice helpers
-  const catsTotal = safeCategories.length;
+  // Slice helpers (Categories: use parentCategories)
+  const catsTotal = parentCategories.length;
   const catsTotalPages = Math.max(1, Math.ceil(catsTotal / perPage));
   const catsStart = catsTotal === 0 ? 0 : (catsPage - 1) * perPage + 1;
   const catsEnd = catsTotal === 0 ? 0 : Math.min(catsPage * perPage, catsTotal);
   const catsVisible = useMemo(
-    () => safeCategories.slice((catsPage - 1) * perPage, catsPage * perPage),
-    [safeCategories, catsPage]
+    () => parentCategories.slice((catsPage - 1) * perPage, catsPage * perPage),
+    [parentCategories, catsPage]
   );
 
   const subsTotal = subRows.length;
@@ -494,7 +501,7 @@ const ServiceCategories = () => {
   const openCreateSubcategory = () => {
     setModalMode("create");
     setModalType("subcategory");
-    setModalRecord({ parentCategoryId: activeParent || safeCategories[0]?.id || "" });
+    setModalRecord({ parentCategoryId: activeParent || parentCategories[0]?.id || "" });
     setModalOpen(true);
   };
 
@@ -621,7 +628,7 @@ const ServiceCategories = () => {
                   onChange={(e) => setActiveParent(e.target.value)}
                   className={selectBase}
                 >
-                  {safeCategories.map((c) => (
+                  {parentCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -707,7 +714,7 @@ const ServiceCategories = () => {
               mode={modalMode}
               type={modalType}
               record={modalRecord}
-              categories={safeCategories}
+              categories={parentCategories}
               onSubmit={handleSubmit}
             />
           </Modal>
