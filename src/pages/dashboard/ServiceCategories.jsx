@@ -1,95 +1,51 @@
 // src/pages/ServiceCategories/ServiceCategories.jsx
-// - Auth guard based on localStorage (prevents logout on refresh)
-// - Per-tab hydration loaders (no data flash): show loader first, then tables
-// - Toast component (no external lib), clean UI
-// - Dates & robust store usage retained
-// - Modal closes on overlay/outside click and Esc
-// - Inputs/selects: smaller, lighter placeholders
-// - NEW: Table footer with "Showing X–Y of Z" (left) and pagination (right) for Categories & Sub-categories
-// - NEW: Modal footer button shows a loader ("Saving…") during create/update
-// - FIX: Categories table now shows **parents only** (no subcategories leaking in)
+// - Tabs use underline style: active has thick BRAND_RGB underline and text; inactive has subtle gray underline
+// - View = read-only details (no inputs)
+// - Edit/Create = full-width inputs inside modal
+// - Delete dialog with circular loader
+// - Category filter uses "category_id" correctly (string/number safe)
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import Footer from "../../components/layout/Footer";
 import useServiceCategoriesStore from "../../store/ServiceCategoriesStore";
-import { FiMoreVertical, FiX } from "react-icons/fi";
+import { FiMoreVertical } from "react-icons/fi";
+import Modal from "../../components/common/Modal";
+import ConfirmDialog from "../../components/common/ConfirmDialog";
+import { ToastAlert, useToastAlert } from "../../components/common/ToastAlert";
+import useClickOutside from "../../lib/useClickOutside";
+import useAuthGuard from "../../lib/useAuthGuard";
+import { Spinner, CenterLoader } from "../../components/common/Spinner"; // ⬅️ external spinner
 
-/* ---------------- Toast (no external lib) ---------------- */
-const Toast = ({ toasts, remove }) => (
-  <div className="fixed top-4 right-4 z-[100] space-y-2">
-    {toasts.map((t) => (
-      <div
-        key={t.id}
-        className={`min-w-[240px] max-w-[360px] rounded-md shadow-lg px-4 py-3 text-sm text-white ${
-          t.type === "error" ? "bg-red-600" : "bg-green-600"
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="font-medium">
-            {t.title || (t.type === "error" ? "Error" : "Success")}
-          </div>
-          <button className="opacity-80 hover:opacity-100" onClick={() => remove(t.id)}>
-            <FiX className="h-4 w-4" />
-          </button>
-        </div>
-        {t.message && <div className="mt-1 text-[13px] opacity-95">{t.message}</div>}
-      </div>
-    ))}
-  </div>
-);
+const BRAND_RGB = "rgb(77, 52, 144)";
 
-const useToast = () => {
-  const [toasts, setToasts] = useState([]);
-  const add = (toast) => {
-    const id = Math.random().toString(36).slice(2);
-    const t = { id, type: "success", timeout: 3500, ...toast };
-    setToasts((prev) => [...prev, t]);
-    setTimeout(() => remove(id), t.timeout);
-  };
-  const remove = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
-  return { toasts, add, remove };
-};
-
-/* ---------------- Little UI helpers ---------------- */
-const Spinner = ({ className = "" }) => (
-  <span
-    className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent align-[-0.125em] text-white ${className}`}
-    role="status"
-    aria-label="loading"
-  />
-);
-
-const CenterLoader = ({ label = "Loading…" }) => (
-  <div className="w-full py-12 flex items-center justify-center">
-    <div className="flex items-center gap-3 rounded-lg bg-[#4D3490] text-white px-4 py-3 shadow-lg">
-      <Spinner />
-      <span className="text-sm font-medium">{label}</span>
-    </div>
-  </div>
-);
-
+/* ---------- Tabs (active = brand text + thick underline) ---------- */
 const Tabs = ({ value, onChange }) => {
   const tabs = [
     { key: "categories", label: "Categories" },
-    { key: "subcategories", label: "Sub-categories" },
+    { key: "subcategories", label: "Subcategories" },
   ];
   return (
-    <div className="border-b border-gray-300 flex items-center justify-between">
-      <div className="flex gap-6">
+    <div className="border-b border-gray-200 flex items-center justify-between">
+      <div className="flex gap-2">
         {tabs.map((t) => {
           const active = value === t.key;
           return (
             <button
               key={t.key}
+              type="button"
               onClick={() => onChange(t.key)}
-              className={`py-3 text-sm font-medium border-b-2 -mb-px transition ${
-                active
-                  ? "border-[#4D3490] text-[#4D3490]"
-                  : "border-transparent text-gray-600 hover:text-gray-900"
-              }`}
+              aria-current={active ? "page" : undefined}
+              className={`relative -mb-px px-4 py-2 text-sm font-semibold transition-colors border-solid ${
+                active ? "border-b-4" : "border-b-2"
+              } border-b rounded-t-lg`}
+              style={{
+                color: active ? BRAND_RGB : "#374151",              // text color
+                borderBottomColor: active ? BRAND_RGB : "#D1D5DB",  // gray-300 for inactive
+                backgroundColor: "transparent",
+              }}
             >
               {t.label}
             </button>
@@ -100,20 +56,29 @@ const Tabs = ({ value, onChange }) => {
   );
 };
 
-const ThreeDotsMenu = ({ items }) => {
+/* ---------- 3-dots menu ---------- */
+const ThreeDotsMenu = ({ items = [] }) => {
   const [open, setOpen] = useState(false);
-  const safeItems = Array.isArray(items) ? items : [];
+  const boxRef = useRef(null);
+  useClickOutside(boxRef, () => setOpen(false));
   return (
-    <div className="relative inline-block text-left">
-      <button className="p-2 rounded hover:bg-gray-100" onClick={() => setOpen((v) => !v)}>
+    <div className="relative inline-block text-left" ref={boxRef}>
+      <button
+        type="button"
+        className="p-2 rounded hover:bg-gray-100"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
         <FiMoreVertical className="w-4 h-4" />
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-36 origin-top-right rounded-md border border-gray-200 bg-white shadow-lg z-20">
-          {safeItems.map((item, idx) => (
+        <div className="absolute right-0 mt-2 w-44 origin-top-right rounded-md border border-gray-200 bg-white shadow-lg z-20">
+          {items.map((item, idx) => (
             <button
               key={idx}
+              type="button"
               onClick={() => {
                 setOpen(false);
                 item.onClick?.();
@@ -129,81 +94,62 @@ const ThreeDotsMenu = ({ items }) => {
   );
 };
 
-/* ----------- Shared input styles (small, light placeholders) ----------- */
 const inputBase =
   "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm placeholder:text-xs placeholder:font-light placeholder:text-gray-400";
 const selectBase =
-  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm";
+  "rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm";
 
-/* ---------------- Modal: overlay/outside/Esc to close ---------------- */
-const Modal = ({ open, title, onClose, children, footer }) => {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => e.key === "Escape" && onClose?.();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  return (
-    <>
-      {/* Backdrop (overlay click closes) */}
-      <div
-        className={`fixed inset-0 z-30 bg-black/30 transition-opacity ${
-          open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
-        onClick={onClose}
-        aria-hidden={!open}
-      />
-      {/* Wrapper (outside click closes) */}
-      <div
-        className={`fixed inset-0 z-40 flex items-center justify-center p-4 transition ${
-          open ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
-        aria-hidden={!open}
-        onClick={onClose}
-      >
-        {/* Panel (stop inside clicks) */}
-        <div
-          className="w-full max-w-md bg-white rounded-lg shadow-xl"
-          onClick={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-            <h3 className="text-base font-semibold">{title}</h3>
-            <button className="p-2 rounded hover:bg-gray-100" onClick={onClose} aria-label="Close">
-              <FiX className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="p-4 max-h-[70vh] overflow-auto">{children}</div>
-
-          <div className="px-4 py-3 border-t border-gray-200">{footer}</div>
-        </div>
+/* ---------- Readonly details for View ---------- */
+const DetailsList = ({ items }) => (
+  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+    {items.map((item) => (
+      <div key={item.label} className="space-y-1">
+        <dt className="text-xs uppercase tracking-wide text-gray-500">{item.label}</dt>
+        <dd className="text-sm font-medium text-gray-900">{item.value ?? "—"}</dd>
       </div>
-    </>
-  );
-};
+    ))}
+  </dl>
+);
 
-/* ---------------- Forms ---------------- */
+/* ---------- Category/Subcategory form ---------- */
 const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
-  const [name, setName] = useState(record?.name ?? "");
-  const [parentCategoryId, setParentCategoryId] = useState(
-    record?.parentCategoryId ?? ""
-  );
-
   const isView = mode === "view";
   const isSub = type === "subcategory";
   const safeCategories = Array.isArray(categories) ? categories : [];
+
+  const [name, setName] = useState(record?.name ?? "");
+  const [parentCategoryId, setParentCategoryId] = useState(record?.parentCategoryId ?? "");
 
   useEffect(() => {
     setName(record?.name ?? "");
     setParentCategoryId(record?.parentCategoryId ?? "");
   }, [record]);
 
+  if (isView) {
+    return (
+      <DetailsList
+        items={[
+          { label: isSub ? "Subcategory Name" : "Category Name", value: record?.name || "—" },
+          ...(isSub
+            ? [
+                {
+                  label: "Category",
+                  value:
+                    safeCategories.find((c) => Number(c.id) === Number(record?.parentCategoryId))
+                      ?.name || "—",
+                },
+              ]
+            : []),
+          { label: "Created", value: record?.createdAtReadable || "—" },
+          { label: "Updated", value: record?.updatedAtReadable || "—" },
+        ]}
+      />
+    );
+  }
+
   return (
     <form
-      className="space-y-4"
+      className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
         const payload = isSub
@@ -213,30 +159,30 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
       }}
     >
       <div>
-        <label className="block text-sm font-medium mb-1">Name</label>
+        <label className="block text-sm font-medium mb-1">
+          {isSub ? "Subcategory Name" : "Category Name"}
+        </label>
         <input
           type="text"
           value={name}
-          disabled={isView}
           onChange={(e) => setName(e.target.value)}
           className={inputBase}
-          placeholder="e.g. Professional Services"
+          placeholder={isSub ? "e.g. Accounting" : "e.g. Professional Services"}
           required
         />
       </div>
 
       {isSub && (
         <div>
-          <label className="block text-sm font-medium mb-1">Parent Category</label>
+          <label className="block text-sm font-medium mb-1">Category</label>
           <select
-            disabled={isView}
             value={parentCategoryId || ""}
             onChange={(e) => setParentCategoryId(e.target.value)}
-            className={selectBase}
+            className={`${selectBase} w-full`} // full width INSIDE modal
             required
           >
             <option value="" disabled>
-              Select parent…
+              Select category…
             </option>
             {safeCategories.map((c) => (
               <option key={c.id} value={c.id}>
@@ -247,23 +193,23 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
         </div>
       )}
 
-      {!isView && <button type="submit" id="__modal_submit_btn__" className="hidden" />}
+      <button type="submit" id="__modal_submit_btn__" className="hidden" />
     </form>
   );
 };
 
-/* ---------------- Tables with footer (showing + pagination) ---------------- */
+/* ---------- Table shells ---------- */
 const TableShell = ({ children, footerLeft, footerRight }) => (
-  <div className="rounded-xl border border-gray-200 overflow-hidden">
+  <div className="rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
     <div className="overflow-auto">{children}</div>
-    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-white border-t border-gray-200">
+    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-t border-gray-200">
       <div className="text-sm text-gray-600">{footerLeft}</div>
       <div>{footerRight}</div>
     </div>
   </div>
 );
 
-const CategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) => {
+const CategoriesTable = ({ rows, onView, onEdit, onDelete, footerLeft, footerRight }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
   return (
     <TableShell footerLeft={footerLeft} footerRight={footerRight}>
@@ -287,6 +233,7 @@ const CategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) => {
                   items={[
                     { label: "View", onClick: () => onView(row) },
                     { label: "Edit", onClick: () => onEdit(row) },
+                    { label: "Delete", onClick: () => onDelete(row) },
                   ]}
                 />
               </td>
@@ -305,7 +252,15 @@ const CategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) => {
   );
 };
 
-const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) => {
+const SubcategoriesTable = ({
+  rows,
+  categoryNameById,
+  onView,
+  onEdit,
+  onDelete,
+  footerLeft,
+  footerRight,
+}) => {
   const safeRows = Array.isArray(rows) ? rows : [];
   return (
     <TableShell footerLeft={footerLeft} footerRight={footerRight}>
@@ -313,7 +268,7 @@ const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) =
         <thead className="bg-gray-100">
           <tr>
             <th className="text-left px-4 py-3 font-semibold">Name</th>
-            <th className="text-left px-4 py-3 font-semibold">Parent</th>
+            <th className="text-left px-4 py-3 font-semibold">Category</th>
             <th className="text-left px-4 py-3 font-semibold">Created</th>
             <th className="text-left px-4 py-3 font-semibold">Updated</th>
             <th className="text-right px-4 py-3 font-semibold">Actions</th>
@@ -324,7 +279,9 @@ const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) =
             <tr key={row.id ?? row.name} className="border-t border-gray-100">
               <td className="px-4 py-3">{row.name}</td>
               <td className="px-4 py-3">
-                {row?.parentCategory?.name ?? row?.parentName ?? "—"}
+                {categoryNameById.get(Number(row.parentCategoryId)) ||
+                  categoryNameById.get(Number(row.category_id)) ||
+                  "—"}
               </td>
               <td className="px-4 py-3">{row.createdAtReadable}</td>
               <td className="px-4 py-3">{row.updatedAtReadable}</td>
@@ -333,6 +290,7 @@ const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) =
                   items={[
                     { label: "View", onClick: () => onView(row) },
                     { label: "Edit", onClick: () => onEdit(row) },
+                    { label: "Delete", onClick: () => onDelete(row) },
                   ]}
                 />
               </td>
@@ -341,7 +299,7 @@ const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) =
           {safeRows.length === 0 && (
             <tr>
               <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
-                No sub-categories for this parent.
+                No subcategories.
               </td>
             </tr>
           )}
@@ -351,18 +309,39 @@ const SubcategoriesTable = ({ rows, onView, onEdit, footerLeft, footerRight }) =
   );
 };
 
+/* ---------- store pickers ---------- */
+const useServiceCategoriesStoreActions = () => {
+  const categories = useServiceCategoriesStore((s) => s.categories);
+  const subCategories = useServiceCategoriesStore((s) => s.subCategories);
+  const fetchCategories = useServiceCategoriesStore((s) => s.fetchCategories);
+  const fetchSubCategories = useServiceCategoriesStore((s) => s.fetchSubCategories);
+  const createCategory = useServiceCategoriesStore((s) => s.createCategory);
+  const createSubCategory = useServiceCategoriesStore((s) => s.createSubCategory);
+  const updateCategory = useServiceCategoriesStore((s) => s.updateCategory);
+  const updateSubCategory = useServiceCategoriesStore((s) => s.updateSubCategory);
+  const deleteCategory = useServiceCategoriesStore((s) => s.deleteCategory);
+  const deleteSubCategory = useServiceCategoriesStore((s) => s.deleteSubCategory);
+  return {
+    categories,
+    subCategories,
+    fetchCategories,
+    fetchSubCategories,
+    createCategory,
+    createSubCategory,
+    updateCategory,
+    updateSubCategory,
+    deleteCategory,
+    deleteSubCategory,
+  };
+};
+
 const ServiceCategories = () => {
   const navigate = useNavigate();
-  const toast = useToast();
+  useAuthGuard(navigate); // externalized useEffect guard
 
-  // NEW: submitting state for modal button loader
+  const toast = useToastAlert();
+
   const [submitting, setSubmitting] = useState(false);
-
-  // Auth guard like Dashboard: check localStorage directly (prevents logout on refresh)
-  useEffect(() => {
-    const token = localStorage.getItem('authToken');
-    if (!token) navigate('/login');
-  }, [navigate]);
 
   const {
     categories,
@@ -372,76 +351,71 @@ const ServiceCategories = () => {
     createCategory,
     createSubCategory,
     updateCategory,
-  } = useServiceCategoriesStore();
+    updateSubCategory,
+    deleteCategory,
+    deleteSubCategory,
+  } = useServiceCategoriesStoreActions();
 
   const safeCategories = Array.isArray(categories) ? categories : [];
-
-  // FIX: only parents in Categories table
-  const parentCategories = useMemo(
-    () => safeCategories.filter((c) => !c.parentCategoryId),
+  const categoriesMap = useMemo(
+    () => new Map(safeCategories.map((c) => [Number(c.id), c.name])),
     [safeCategories]
   );
 
   const [tab, setTab] = useState("categories");
-  const [activeParent, setActiveParent] = useState("");
+  const [subcatFilter, setSubcatFilter] = useState("ALL");
 
-  // Per-tab hydration flags to control initial loaders & avoid data flash
   const [catsHydrated, setCatsHydrated] = useState(false);
   const [subsHydrated, setSubsHydrated] = useState(false);
 
-  // Pagination state (client-side) per tab
   const perPage = 10;
   const [catsPage, setCatsPage] = useState(1);
   const [subsPage, setSubsPage] = useState(1);
 
-  // Initial categories load with hydration control
+  // Confirm dialog
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmPayload, setConfirmPayload] = useState(null);
+
+  // initial categories
   useEffect(() => {
     (async () => {
-      await fetchCategories?.();
+      await fetchCategories();
       setCatsHydrated(true);
     })();
   }, [fetchCategories]);
 
-  // Ensure a default parent is set when going to subcategories
+  // load subcats on tab/filter
   useEffect(() => {
-    if (tab === "subcategories" && !activeParent && parentCategories.length > 0) {
-      setActiveParent(parentCategories[0].id);
-    }
-  }, [tab, activeParent, parentCategories]);
+    if (tab !== "subcategories") return;
+    setSubsHydrated(false);
+    (async () => {
+      // Fetch ALL; UI filters reliably below
+      await fetchSubCategories(null);
+      setSubsHydrated(true);
+    })();
+  }, [tab, fetchSubCategories]);
 
-  // Reset pages when switching tab/parent
-  useEffect(() => {
-    setCatsPage(1);
-  }, [catsHydrated]);
-  useEffect(() => {
-    setSubsPage(1);
-  }, [activeParent, subsHydrated, tab]);
-
-  // Load subcategories when parent changes (with hydration control)
-  useEffect(() => {
-    if (tab === "subcategories" && activeParent) {
-      setSubsHydrated(false);
-      (async () => {
-        await fetchSubCategories?.(Number(activeParent));
-        setSubsHydrated(true);
-      })();
-    }
-  }, [tab, activeParent, fetchSubCategories]);
-
-  const subRows = useMemo(() => {
-    if (!activeParent) return [];
-    return Array.isArray(subCategories) ? subCategories : [];
-  }, [subCategories, activeParent]);
-
-  // Slice helpers (Categories: use parentCategories)
-  const catsTotal = parentCategories.length;
+  /* ----- PAGING (Categories) ----- */
+  const parentRows = safeCategories;
+  const catsTotal = parentRows.length;
   const catsTotalPages = Math.max(1, Math.ceil(catsTotal / perPage));
   const catsStart = catsTotal === 0 ? 0 : (catsPage - 1) * perPage + 1;
   const catsEnd = catsTotal === 0 ? 0 : Math.min(catsPage * perPage, catsTotal);
   const catsVisible = useMemo(
-    () => parentCategories.slice((catsPage - 1) * perPage, catsPage * perPage),
-    [parentCategories, catsPage]
+    () => parentRows.slice((catsPage - 1) * perPage, catsPage * perPage),
+    [parentRows, catsPage]
   );
+
+  /* ----- FILTER + PAGING (Subcategories) ----- */
+  const subRowsAll = Array.isArray(subCategories) ? subCategories : [];
+  const subRows = useMemo(() => {
+    if (subcatFilter === "ALL") return subRowsAll;
+    const cid = Number(subcatFilter);
+    return subRowsAll.filter(
+      (r) => Number(r.parentCategoryId ?? r.category_id) === cid
+    );
+  }, [subRowsAll, subcatFilter]);
 
   const subsTotal = subRows.length;
   const subsTotalPages = Math.max(1, Math.ceil(subsTotal / perPage));
@@ -452,11 +426,8 @@ const ServiceCategories = () => {
     [subRows, subsPage]
   );
 
-  // Footer makers
   const makeFooterLeft = (total, start, end) =>
-    total === 0
-      ? "No records"
-      : `Showing ${start}–${end} of ${total} record${total > 1 ? "s" : ""}`;
+    total === 0 ? "No records" : `Showing ${start}–${end} of ${total} record${total > 1 ? "s" : ""}`;
 
   const makeFooterRight = (page, totalPages, setPage) => (
     <div className="flex items-center gap-2">
@@ -484,13 +455,12 @@ const ServiceCategories = () => {
     </div>
   );
 
-  // Modal state
+  // Modals
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create"); // 'create' | 'view' | 'edit'
   const [modalType, setModalType] = useState("category"); // 'category' | 'subcategory'
   const [modalRecord, setModalRecord] = useState(null);
 
-  // Helpers to open modal
   const openCreateCategory = () => {
     setModalMode("create");
     setModalType("category");
@@ -501,64 +471,92 @@ const ServiceCategories = () => {
   const openCreateSubcategory = () => {
     setModalMode("create");
     setModalType("subcategory");
-    setModalRecord({ parentCategoryId: activeParent || parentCategories[0]?.id || "" });
+    const prefillParent =
+      subcatFilter === "ALL" ? (safeCategories[0]?.id || "") : subcatFilter;
+    setModalRecord({ parentCategoryId: prefillParent });
     setModalOpen(true);
   };
 
   const openView = (type, record) => {
     setModalMode("view");
     setModalType(type);
-    setModalRecord({
-      ...record,
-      parentCategoryId: record?.parentCategoryId ?? record?.parentCategory?.id ?? "",
-    });
+    setModalRecord({ ...record });
     setModalOpen(true);
   };
 
   const openEdit = (type, record) => {
     setModalMode("edit");
     setModalType(type);
-    setModalRecord({
-      ...record,
-      parentCategoryId: record?.parentCategoryId ?? record?.parentCategory?.id ?? "",
-    });
+    setModalRecord({ ...record });
     setModalOpen(true);
   };
 
   const closeModal = () => setModalOpen(false);
 
-  // Submit handler — shows only a button loader (no extra page spinner)
+  // Ask delete
+  const askDeleteCategory = (row) => {
+    setConfirmPayload({ type: "category", row });
+    setConfirmOpen(true);
+  };
+  const askDeleteSubcategory = (row) => {
+    setConfirmPayload({ type: "subcategory", row });
+    setConfirmOpen(true);
+  };
+
+  // Confirm delete
+  const handleConfirmDelete = async () => {
+    if (!confirmPayload) return;
+    setConfirmBusy(true);
+    const { type, row } = confirmPayload;
+    try {
+      if (type === "category") {
+        await deleteCategory(row.id);
+        toast.add({ type: "success", title: "Deleted", message: "Category deleted successfully." });
+        await fetchCategories();
+        if (tab === "subcategories") {
+          await fetchSubCategories(null); // reload all; UI keeps filter
+        }
+      } else {
+        await deleteSubCategory(row.id);
+        toast.add({ type: "success", title: "Deleted", message: "Subcategory deleted successfully." });
+        await fetchSubCategories(null); // reload all; UI keeps filter
+      }
+      setConfirmOpen(false);
+      setConfirmPayload(null);
+    } catch (e) {
+      toast.add({ type: "error", title: "Failed", message: e?.message || "Delete failed." });
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
+  // Submit create/edit
   const handleSubmit = async (payload) => {
     try {
       setSubmitting(true);
       if (modalType === "subcategory") {
         if (modalMode === "edit" && modalRecord?.id) {
-          await updateCategory?.(modalRecord.id, payload);
-          toast.add({ type: "success", title: "Updated", message: "Sub-category updated successfully." });
+          await updateSubCategory(modalRecord.id, payload);
+          toast.add({ type: "success", title: "Updated", message: "Subcategory updated successfully." });
         } else {
-          await createSubCategory?.(payload);
-          toast.add({ type: "success", title: "Created", message: "Sub-category created successfully." });
+          await createSubCategory(payload);
+          toast.add({ type: "success", title: "Created", message: "Subcategory created successfully." });
         }
+        await fetchSubCategories(null); // reload all; UI filter applies
       } else {
         if (modalMode === "edit" && modalRecord?.id) {
-          await updateCategory?.(modalRecord.id, payload);
+          await updateCategory(modalRecord.id, payload);
           toast.add({ type: "success", title: "Updated", message: "Category updated successfully." });
         } else {
-          await createCategory?.(payload);
+          await createCategory(payload);
           toast.add({ type: "success", title: "Created", message: "Category created successfully." });
         }
+        await fetchCategories();
       }
-
-      // Refresh lists
-      await fetchCategories?.();
-      if (modalType === "subcategory") {
-        const pid = payload.parentCategoryId || modalRecord?.parentCategoryId || activeParent;
-        if (pid) await fetchSubCategories?.(Number(pid));
-      }
-
       closeModal();
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Action failed." });
+      // eslint-disable-next-line no-console
       console.error(e);
     } finally {
       setSubmitting(false);
@@ -566,70 +564,69 @@ const ServiceCategories = () => {
   };
 
   const modalTitle = `${modalMode[0].toUpperCase()}${modalMode.slice(1)} ${
-    modalType === "category" ? "Category" : "Sub-category"
+    modalType === "category" ? "Category" : "Subcategory"
   }`;
 
   return (
     <main>
-      {/* Toasts */}
-      <Toast toasts={toast.toasts} remove={toast.remove} />
+      <ToastAlert toasts={toast.toasts} remove={toast.remove} />
 
-      <div className="overflow-x-hidden flex bg-white border-t border-gray-300">
-        {/* Sidebar */}
+      <div className="overflow-x-hidden flex bg-gray-50">
         <Sidebar />
 
         <div
           id="app-layout-content"
           className="relative min-h-screen w-full min-w-[100vw] md:min-w-0 ml-[15.625rem] [transition:margin_0.25s_ease-out]"
         >
-          {/* Navbar */}
           <Navbar />
 
           <div className="px-6 pb-20 pt-6">
             {/* Header */}
-            <div className="flex items-center mb-6 justify-between -mx-6 border-b border-gray-300 pb-4">
-              <p className="inline-block px-6 text-lg leading-5 font-semibold">
-                Service Categories
-              </p>
+            <div className="flex items-center mb-6 justify-between -mx-6 border-b border-gray-200 pb-4 bg-white px-6">
+              <p className="inline-block text-lg leading-5 font-semibold">Service Categories</p>
             </div>
 
             {/* Tabs + Create */}
-            <div className="mb-4">
+            <div className="mb-4 bg-white rounded-xl border border-gray-200 px-4 py-3 shadow-sm">
               <div className="flex items-center justify-between">
-                <Tabs value={tab} onChange={(key) => { setTab(key); }} />
+                <Tabs value={tab} onChange={(key) => setTab(key)} />
                 <div className="pl-4 py-2">
                   {tab === "categories" ? (
                     <button
                       onClick={openCreateCategory}
-                      className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm"
-                      style={{ backgroundColor: "#4D3490", height: "36px" }}
+                      className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm shadow"
+                      style={{ backgroundColor: BRAND_RGB, height: "36px" }}
                     >
                       + New Category
                     </button>
                   ) : (
                     <button
                       onClick={openCreateSubcategory}
-                      className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm"
-                      style={{ backgroundColor: "#4D3490", height: "36px" }}
+                      className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm shadow"
+                      style={{ backgroundColor: BRAND_RGB, height: "36px" }}
                     >
-                      + New Sub-category
+                      + New Subcategory
                     </button>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Parent selector for subcategories */}
+            {/* Subcategories filter */}
             {tab === "subcategories" && (
               <div className="flex items-center gap-3 mb-4">
-                <label className="text-sm text-gray-600">Parent:</label>
+                <label className="text-sm text-gray-700">Category filter</label>
                 <select
-                  value={activeParent || ""}
-                  onChange={(e) => setActiveParent(e.target.value)}
-                  className={selectBase}
+                  value={subcatFilter}
+                  onChange={(e) => {
+                    setSubsPage(1);
+                    setSubcatFilter(e.target.value);
+                  }}
+                  className={`${selectBase} w-60`}
                 >
-                  {parentCategories.map((c) => (
-                    <option key={c.id} value={c.id}>
+                  <option value="ALL">All categories</option>
+                  {safeCategories.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
                       {c.name}
                     </option>
                   ))}
@@ -637,9 +634,8 @@ const ServiceCategories = () => {
               </div>
             )}
 
-            {/* Tables with hydration loaders */}
-            <div>
-              {/* Categories tab */}
+            {/* Tables */}
+            <div className="space-y-4">
               {tab === "categories" && !catsHydrated ? (
                 <CenterLoader />
               ) : tab === "categories" ? (
@@ -647,19 +643,21 @@ const ServiceCategories = () => {
                   rows={catsVisible}
                   onView={(row) => openView("category", row)}
                   onEdit={(row) => openEdit("category", row)}
+                  onDelete={askDeleteCategory}
                   footerLeft={makeFooterLeft(catsTotal, catsStart, catsEnd)}
                   footerRight={makeFooterRight(catsPage, catsTotalPages, setCatsPage)}
                 />
               ) : null}
 
-              {/* Sub-categories tab */}
               {tab === "subcategories" && (!catsHydrated || !subsHydrated) ? (
                 <CenterLoader />
               ) : tab === "subcategories" ? (
                 <SubcategoriesTable
                   rows={subsVisible}
+                  categoryNameById={categoriesMap}
                   onView={(row) => openView("subcategory", row)}
                   onEdit={(row) => openEdit("subcategory", row)}
+                  onDelete={askDeleteSubcategory}
                   footerLeft={makeFooterLeft(subsTotal, subsStart, subsEnd)}
                   footerRight={makeFooterRight(subsPage, subsTotalPages, setSubsPage)}
                 />
@@ -675,10 +673,7 @@ const ServiceCategories = () => {
             footer={
               modalMode === "view" ? (
                 <div className="flex justify-end">
-                  <button
-                    onClick={closeModal}
-                    className="px-4 py-2 rounded-lg border border-gray-300"
-                  >
+                  <button onClick={closeModal} className="px-4 py-2 rounded-lg border border-gray-300">
                     Close
                   </button>
                 </div>
@@ -692,19 +687,13 @@ const ServiceCategories = () => {
                     Cancel
                   </button>
                   <button
-                    onClick={() =>
-                      document.getElementById("__modal_submit_btn__")?.click()
-                    }
+                    onClick={() => document.getElementById("__modal_submit_btn__")?.click()}
                     className="px-4 py-2 rounded-lg text-white inline-flex items-center gap-2"
-                    style={{ backgroundColor: "#4D3490" }}
+                    style={{ backgroundColor: BRAND_RGB }}
                     disabled={submitting}
                   >
                     {submitting && <Spinner />}
-                    {submitting
-                      ? "Saving…"
-                      : modalMode === "create"
-                      ? "Create"
-                      : "Save changes"}
+                    {submitting ? "Saving…" : modalMode === "create" ? "Create" : "Save changes"}
                   </button>
                 </div>
               )
@@ -714,10 +703,29 @@ const ServiceCategories = () => {
               mode={modalMode}
               type={modalType}
               record={modalRecord}
-              categories={parentCategories}
+              categories={safeCategories}
               onSubmit={handleSubmit}
             />
           </Modal>
+
+          {/* Delete confirmation */}
+          <ConfirmDialog
+            open={confirmOpen}
+            busy={confirmBusy}
+            title="Delete record"
+            message={
+              confirmPayload?.type === "category"
+                ? `Are you sure you want to delete the category “${confirmPayload?.row?.name}”?`
+                : `Are you sure you want to delete the subcategory “${confirmPayload?.row?.name}”?`
+            }
+            confirmText="Delete"
+            onConfirm={handleConfirmDelete}
+            onCancel={() => {
+              if (confirmBusy) return;
+              setConfirmOpen(false);
+              setConfirmPayload(null);
+            }}
+          />
 
           <Footer />
         </div>

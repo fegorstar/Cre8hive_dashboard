@@ -1,349 +1,316 @@
 // src/store/ServiceCategoriesStore.js
-// Service Categories + Sub-categories store
-// - Auth header from localStorage token (Laravel-friendly: Accept + Bearer + Content-Type)
-// - Member→Admin fallback on create (prevents "Unauthenticated" when token role mismatches)
-// - Robust response parsing (array in several shapes)
-// - Normalizes ids to numbers
-// - Adds createdAtReadable / updatedAtReadable (e.g., "28 Jan, 2025")
-// - Persists categories/subCategories in localStorage
-// - Fallback for subcategories to categories[].children when API yields nothing
-// - FIX: categories state now holds **parents only**; subs live under parent.children
+// Admin Service Categories & Subcategories store
+// ✅ Uses src/lib/apiClient.js
+// ✅ Categories: { category_name } for create/update
+// ✅ Subcategories: { name, category_id } (category_id coerced to integer)
+// ✅ Handles Laravel paginator { data: { data: [...] } } and wrapper {status, data:{data:[...]}} patterns
+// ✅ Clear error messages from { message, errors }
+// ✅ Parents-only in categories; subcategories kept separately
 
-import { create } from 'zustand';
-import axios from 'axios';
-import { BASE_URL } from '../config';
+import { create } from "zustand";
+import api from "../lib/apiClient";
 
-const api = axios.create({ baseURL: BASE_URL });
+/* ---------------- helpers ---------------- */
 
-// Attach Laravel-friendly headers + token to all requests
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('authToken');
-  config.headers = config.headers || {};
-  // Laravel expects this for API responses
-  config.headers.Accept = 'application/json';
-  // default JSON unless caller sets something else (e.g., FormData)
-  if (!config.headers['Content-Type']) {
-    config.headers['Content-Type'] = 'application/json';
-  }
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Format "2025-07-26T06:43:48.000000Z" → "26 Jul, 2025"
+// "26 Jul, 2025"
 const formatReadableDate = (iso) => {
-  if (!iso) return '—';
+  if (!iso) return "—";
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  const day = d.toLocaleDateString('en-GB', { day: '2-digit' });
-  const mon = d.toLocaleDateString('en-GB', { month: 'short' });
+  if (Number.isNaN(d.getTime())) return "—";
+  const day = d.toLocaleDateString("en-GB", { day: "2-digit" });
+  const mon = d.toLocaleDateString("en-GB", { month: "short" });
   const yr = d.getFullYear();
   return `${day} ${mon}, ${yr}`;
 };
 
-// Safely pull arrays regardless of backend envelope
+// Array extractor from raw or paginator
 const extractArray = (res) => {
   if (!res) return [];
-  if (Array.isArray(res)) return res;
-  if (Array.isArray(res?.data)) return res.data;
-  if (Array.isArray(res?.data?.data)) return res.data.data;
-  if (Array.isArray(res?.data?.result)) return res.data.result;
+  const d = res.data;
+  if (Array.isArray(d)) return d;                        // plain array
+  if (Array.isArray(d?.data)) return d.data;             // { data: [...] }
+  if (Array.isArray(d?.data?.data)) return d.data.data;  // { data: { data: [...] } } (Laravel paginator)
+  if (Array.isArray(d?.result)) return d.result;         // { result: [...] }
   return [];
 };
 
-// Coerce ids/parentCategoryId to numbers consistently
-const normalizeIds = (it = {}) => ({
-  ...it,
-  id: it?.id !== undefined ? Number(it.id) : it?.id,
-  parentCategoryId:
-    it?.parentCategoryId !== undefined ? Number(it.parentCategoryId) : it?.parentCategoryId,
+// Unified human-friendly error
+const getErrorMessage = (err, fallback = "Action failed.") => {
+  const msg =
+    err?.response?.data?.message ||
+    err?.response?.data?.error ||
+    err?.message ||
+    fallback;
+
+  const errors = err?.response?.data?.errors;
+  if (errors && typeof errors === "object") {
+    const firsts = Object.entries(errors)
+      .map(([field, arr]) => {
+        const v = Array.isArray(arr) ? arr[0] : arr;
+        return `${field}: ${v}`;
+      })
+      .join(" | ");
+    return firsts || msg;
+  }
+  return msg;
+};
+
+// Coerce to an integer safely (no decimals)
+const toInt = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : NaN;
+};
+
+/* ---- decoration: map API <-> UI models ---- */
+
+// API category: { id, category_name, created_at, updated_at }
+const decorateCategory = (raw = {}) => ({
+  id: Number(raw.id),
+  name: raw.category_name ?? raw.name ?? "",
+  createdAtReadable: formatReadableDate(raw.created_at || raw.createdAt),
+  updatedAtReadable: formatReadableDate(raw.updated_at || raw.updatedAt),
 });
 
-// Decorate one subcategory (parentName optional)
-const decorateSubcategory = (raw = {}, parentName = undefined) => {
-  const norm = normalizeIds(raw);
-  return {
-    ...norm,
-    parentName,
-    createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
-    updatedAtReadable: formatReadableDate(norm.updated_at || norm.updatedAt),
-  };
-};
+// API subcategory: typically { id, name, category_id, created_at, updated_at }
+const decorateSubcategory = (raw = {}, parentName) => ({
+  id: Number(raw.id),
+  name:
+    raw.name ??
+    raw.sub_category_name ??
+    raw.subcategory_name ??
+    "",
+  parentCategoryId:
+    raw.category_id !== undefined && raw.category_id !== null
+      ? Number(raw.category_id)
+      : Number(raw.parentCategoryId),
+  parentName,
+  createdAtReadable: formatReadableDate(raw.created_at || raw.createdAt),
+  updatedAtReadable: formatReadableDate(raw.updated_at || raw.updatedAt),
+});
 
-// Decorate one category
-const decorateCategory = (raw = {}) => {
-  const norm = normalizeIds(raw);
-  return {
-    ...norm,
-    createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
-    updatedAtReadable: formatReadableDate(norm.updated_at || norm.updatedAt),
-    children: Array.isArray(norm.children)
-      ? norm.children.map((c) => decorateSubcategory(c, norm.name))
-      : [],
-  };
-};
+/* ================== STORE ================== */
 
 const useServiceCategoriesStore = create((set, get) => ({
-  // ===== STATE =====
-  categories: JSON.parse(localStorage.getItem('categories') || '[]'),      // parents-only
-  subCategories: JSON.parse(localStorage.getItem('subCategories') || '[]'),// current parent’s subs
+  // parents list (UI)
+  categories: JSON.parse(localStorage.getItem("categories") || "[]"),
+
+  // ALL subcategories (we filter client-side for reliability)
+  subCategories: JSON.parse(localStorage.getItem("subCategories") || "[]"),
+
   loading: false,
   error: null,
 
-  // ===== ACTIONS =====
-
-  // Fetch all categories (parents-only in state; subs attached under .children)
+  /* --------- FETCH: categories (parents) --------- */
   fetchCategories: async () => {
     set({ loading: true, error: null });
     try {
-      const res = await api.get(`/categories`);
+      // ✅ Correct endpoint; payload is {status, data:{data:[...]}}
+      const res = await api.get(`/admin/category`);
+      const raw = extractArray(res);
+      const data = raw.map(decorateCategory);
+
+      set({ categories: data, loading: false });
+      localStorage.setItem("categories", JSON.stringify(data));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("fetchCategories:", err);
+      set({
+        error: getErrorMessage(err, "Failed to fetch categories."),
+        loading: false,
+      });
+      throw err;
+    }
+  },
+
+  /* --------- FETCH: subcategories (ALL; filter done client-side) --------- */
+  // We still try to pass category_id to server, but always keep a full list locally
+  fetchSubCategories: async (parentId = null) => {
+    set({ loading: true, error: null });
+    try {
+      const params = {};
+      if (parentId !== null && parentId !== undefined) {
+        const cid = toInt(parentId);
+        if (!Number.isNaN(cid)) params.category_id = cid;
+      }
+
+      // ✅ Correct endpoint; payload is {status, data:{data:[...]}}
+      let res;
+      try {
+        res = await api.get(`/admin/sub-category`, { params });
+      } catch (e) {
+        // fallback in case of temporary variant
+        res = await api.get(`/admin/sub-category`, { params: {} });
+      }
+
       const raw = extractArray(res);
 
-      // Normalize all incoming rows first
-      const all = raw.map(normalizeIds);
+      const cats = get().categories || [];
+      const catsMap = new Map(cats.map((c) => [Number(c.id), c.name]));
 
-      // Partition: parents vs subs
-      const parentsRaw = [];
-      const subsRaw = [];
-      for (const item of all) {
-        const hasParent =
-          item.parentCategoryId !== null &&
-          item.parentCategoryId !== undefined &&
-          item.parentCategoryId !== 0;
-        if (hasParent) subsRaw.push(item);
-        else {
-          parentsRaw.push({
-            ...item,
-            children: Array.isArray(item.children) ? item.children.map(normalizeIds) : [],
-          });
-        }
-      }
-
-      // Index parents and merge subs from both: existing nested children + flat subs
-      const parentsMap = new Map(
-        parentsRaw.map((p) => [Number(p.id), { ...p, children: Array.isArray(p.children) ? p.children : [] }])
+      const list = raw.map((s) =>
+        decorateSubcategory(s, catsMap.get(Number(s.category_id)))
       );
 
-      // Merge flat-list children
-      for (const s of subsRaw) {
-        const pid = Number(s.parentCategoryId);
-        const p = parentsMap.get(pid);
-        if (p) {
-          p.children.push(s);
-        }
-      }
-
-      // Decorate parents + their children (ensure parentName is set on children)
-      const decoratedParents = Array.from(parentsMap.values()).map((p) => {
-        const decorated = decorateCategory({
-          ...p,
-          children: Array.isArray(p.children) ? p.children : [],
-        });
-        decorated.children = (decorated.children || []).map((sc) =>
-          decorateSubcategory(sc, decorated.name)
-        );
-        return decorated;
+      // Always store the full set; UI will filter before paginating
+      set({ subCategories: list, loading: false });
+      localStorage.setItem("subCategories", JSON.stringify(list));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("fetchSubCategories:", err);
+      set({
+        error: getErrorMessage(err, "Failed to fetch subcategories."),
+        loading: false,
       });
-
-      set({ categories: decoratedParents, loading: false });
-      localStorage.setItem('categories', JSON.stringify(decoratedParents));
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-      set({ error: error?.response?.data?.message || error.message, loading: false });
+      throw err;
     }
   },
 
-  // Fetch sub-categories for given parent id; fallback to categories[].children if API empty
-  fetchSubCategories: async (parentCategoryId) => {
+  /* --------- CREATE / UPDATE / DELETE: Category --------- */
+
+  createCategory: async ({ name }) => {
     set({ loading: true, error: null });
     try {
-      const pid = Number(parentCategoryId);
-      const res = await api.get(`/categories/subcategory`, { params: { parentCategoryId: pid } });
-      let subs = extractArray(res);
+      const payload = { category_name: (name || "").trim() };
+      await api.post(`/admin/category/create`, payload);
 
-      // Fallback from local categories[].children
-      if (!subs.length) {
-        const parent = get().categories.find((c) => Number(c.id) === pid);
-        subs = Array.isArray(parent?.children) ? parent.children : [];
-      }
-
-      const parent = get().categories.find((c) => Number(c.id) === pid);
-      const parentName = parent?.name || '—';
-      const decorated = subs.map((s) => decorateSubcategory(s, parentName));
-
-      set({ subCategories: decorated, loading: false });
-      localStorage.setItem('subCategories', JSON.stringify(decorated));
-    } catch (error) {
-      console.error('Error fetching sub-categories:', error);
-      set({ error: error?.response?.data?.message || error.message, loading: false });
+      await get().fetchCategories();
+      set({ loading: false });
+      return { message: "Category created successfully" };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("createCategory:", err);
+      const message = getErrorMessage(
+        err,
+        "Failed to create category. Please try again."
+      );
+      set({ error: message, loading: false });
+      throw new Error(message);
     }
   },
 
-  // Create category (member → admin fallback like Creators)
-  createCategory: async (categoryData) => {
+  updateCategory: async (id, { name }) => {
     set({ loading: true, error: null });
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token) throw new Error('Not authenticated. Please log in again.');
+      const payload = { category_name: (name || "").trim() };
+      await api.put(`/admin/category/${id}`, payload);
 
-      let res;
-      try {
-        res = await api.post(`/categories`, categoryData);
-      } catch (err) {
-        if (err?.response?.status === 401) {
-          res = await api.post(`/admin/categories`, categoryData);
-        } else {
-          throw err;
-        }
-      }
-
-      const createdRaw = extractArray(res)[0] || res?.data?.data || res?.data;
-      const created = decorateCategory(createdRaw);
-
-      set((state) => {
-        // parents-only list
-        const updated = [...state.categories, created];
-        localStorage.setItem('categories', JSON.stringify(updated));
-        return { categories: updated, loading: false };
-      });
-
-      return { message: 'Category created successfully!' };
-    } catch (error) {
-      console.error('Error creating category:', error);
-      set({ error: error?.response?.data?.message || error.message, loading: false });
-      throw new Error(error?.response?.data?.message || error.message);
+      await get().fetchCategories();
+      set({ loading: false });
+      return { message: "Category updated successfully" };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("updateCategory:", err);
+      const message = getErrorMessage(
+        err,
+        "Failed to update category. Please try again."
+      );
+      set({ error: message, loading: false });
+      throw new Error(message);
     }
   },
 
-  // Create sub-category (member → admin fallback)
-  createSubCategory: async (subCategoryData) => {
+  deleteCategory: async (id) => {
     set({ loading: true, error: null });
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token) throw new Error('Not authenticated. Please log in again.');
+      await api.delete(`/admin/category/${id}`);
 
-      const payload = {
-        ...subCategoryData,
-        parentCategoryId: Number(subCategoryData.parentCategoryId),
-      };
-
-      let res;
-      try {
-        // If your API actually has /categories/subcategory for creation, swap this first call.
-        res = await api.post(`/categories`, payload);
-      } catch (err) {
-        if (err?.response?.status === 401) {
-          res = await api.post(`/admin/categories`, payload);
-        } else {
-          throw err;
-        }
-      }
-
-      const createdRaw = extractArray(res)[0] || res?.data?.data || res?.data;
-
-      // Find parent for parentName
-      const parent = get().categories.find((c) => Number(c.id) === Number(payload.parentCategoryId));
-      const parentName = parent?.name || '—';
-
-      const created = decorateSubcategory(createdRaw, parentName);
-
-      set((state) => {
-        // update categories[].children for the matched parent
-        const categories = (state.categories || []).map((c) =>
-          Number(c.id) === Number(payload.parentCategoryId)
-            ? { ...c, children: [...(c.children || []), created] }
-            : c
-        );
-
-        // update current subCategories list if viewing same parent
-        const subCategories =
-          Number(state.subCategories?.[0]?.parentCategoryId) === Number(payload.parentCategoryId)
-            ? [...state.subCategories, created]
-            : state.subCategories;
-
-        localStorage.setItem('categories', JSON.stringify(categories));
-        localStorage.setItem('subCategories', JSON.stringify(subCategories));
-
-        return { categories, subCategories, loading: false };
-      });
-
-      return { message: 'Sub-category created successfully!' };
-    } catch (error) {
-      console.error('Error creating sub-category:', error);
-      set({ error: error?.response?.data?.message || error.message, loading: false });
-      throw new Error(error?.response?.data?.message || error.message);
+      await get().fetchCategories();
+      set({ loading: false });
+      return { message: "Category deleted successfully" };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("deleteCategory:", err);
+      const message = getErrorMessage(
+        err,
+        "Failed to delete category. Please try again."
+      );
+      set({ error: message, loading: false });
+      throw new Error(message);
     }
   },
 
-  // Update (category or sub-category)
-  updateCategory: async (id, updatedData) => {
+  /* --------- CREATE / UPDATE / DELETE: Subcategory --------- */
+
+  createSubCategory: async ({ name, parentCategoryId }) => {
     set({ loading: true, error: null });
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token) throw new Error('Not authenticated. Please log in again.');
+      const cleanName = (name || "").trim();
+      const category_id = toInt(parentCategoryId);
 
-      let res;
-      try {
-        res = await api.put(`/categories/${id}`, updatedData);
-      } catch (err) {
-        if (err?.response?.status === 401) {
-          res = await api.put(`/admin/categories/${id}`, updatedData);
-        } else {
-          throw err;
-        }
-      }
+      const payload = { name: cleanName, category_id };
+      await api.post(`/admin/sub-category/create`, payload);
 
-      const updatedRaw = res?.data?.data || res?.data;
+      // Refresh full list; UI applies current filter
+      await get().fetchSubCategories(null);
+      set({ loading: false });
+      return { message: "Subcategory created successfully" };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("createSubCategory:", err);
+      const message = getErrorMessage(
+        err,
+        "Failed to create subcategory. Please try again."
+      );
+      set({ error: message, loading: false });
+      throw new Error(message);
+    }
+  },
 
-      set((state) => {
-        // Update parents (top-level categories)
-        let categories = (state.categories || []).map((c) =>
-          Number(c.id) === Number(id)
-            ? {
-                ...c,
-                ...updatedRaw,
-                ...decorateCategory(updatedRaw), // ensures readable dates
-                // Keep existing children if the backend didn’t return them
-                children: Array.isArray(c.children) ? c.children : [],
-              }
-            : c
-        );
+  updateSubCategory: async (id, { name, parentCategoryId }) => {
+    set({ loading: true, error: null });
+    try {
+      const cleanName = (name || "").trim();
+      const category_id = toInt(parentCategoryId);
 
-        // Update nested subcategories by id
-        categories = categories.map((c) => ({
-          ...c,
-          children: Array.isArray(c.children)
-            ? c.children.map((sc) =>
-                Number(sc.id) === Number(id)
-                  ? {
-                      ...sc,
-                      ...updatedRaw,
-                      ...decorateSubcategory(updatedRaw, c.name),
-                    }
-                  : sc
-              )
-            : c.children,
-        }));
+      const payload = { name: cleanName, category_id };
+      await api.put(`/admin/sub-category/${id}`, payload);
 
-        // Update current subCategories list
-        const subCategories = (state.subCategories || []).map((sc) =>
-          Number(sc.id) === Number(id)
-            ? { ...sc, ...updatedRaw, ...decorateSubcategory(updatedRaw, sc.parentName) }
-            : sc
-        );
+      // Refresh full list; UI applies current filter
+      await get().fetchSubCategories(null);
+      set({ loading: false });
+      return { message: "Subcategory updated successfully" };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("updateSubCategory:", err);
+      const message = getErrorMessage(
+        err,
+        "Failed to update subcategory. Please try again."
+      );
+      set({ error: message, loading: false });
+      throw new Error(message);
+    }
+  },
 
-        localStorage.setItem('categories', JSON.stringify(categories));
-        localStorage.setItem('subCategories', JSON.stringify(subCategories));
+  deleteSubCategory: async (id) => {
+    set({ loading: true, error: null });
+    try {
+      await api.delete(`/admin/sub-category/${id}`);
 
-        return { categories, subCategories, loading: false };
-      });
+      // Refresh full list; UI applies current filter
+      await get().fetchSubCategories(null);
+      set({ loading: false });
+      return { message: "Subcategory deleted successfully" };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("deleteSubCategory:", err);
+      const message = getErrorMessage(
+        err,
+        "Failed to delete subcategory. Please try again."
+      );
+      set({ error: message, loading: false });
+      throw new Error(message);
+    }
+  },
 
-      return { message: 'Category updated successfully!' };
-    } catch (error) {
-      console.error('Error updating category:', error);
-      set({ error: error?.response?.data?.message || error.message, loading: false });
-      throw new Error(error?.response?.data?.message || error.message);
+  // Optional: view one subcategory
+  getSubCategory: async (id) => {
+    try {
+      const res = await api.get(`/admin/sub-category/${id}`);
+      return res?.data?.data || res?.data;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("getSubCategory:", err);
+      throw err;
     }
   },
 }));

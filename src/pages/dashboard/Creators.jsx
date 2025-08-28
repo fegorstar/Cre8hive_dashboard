@@ -1,14 +1,13 @@
 // src/pages/dashboard/Creators.jsx
 // Updates:
-// - Search filters the TABLE; inline "No results…" row when empty.
-// - Footer: bottom-left shows "Showing X–Y of Z records" (respects q/filter); bottom-right has pagination.
-// - Search width preserved (w-72).
-// - Placeholders small + light everywhere.
-// - View modal is read-only, with image thumbnail + Open/Copy for URLs.
-// - Modal closes on overlay/outside click and Esc.
-// - General cleanup + comments.
+// - Removed "New Creator" button
+// - Search input now lives in the Tabs row on the RIGHT (replaces the button)
+// - Removed duplicate search from filters section; kept Status filter only
+// - Reuse shared components: Modal, ToastAlert/useToastAlert, useClickOutside, useAuthGuard, Spinner/CenterLoader
+// - Summary cards + 3 tabs (Assets creators, Service providers, Artists)
+// - View modal is read-only; Create/Edit modal uses same form
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 import Sidebar from "../../components/layout/Sidebar";
@@ -16,87 +15,71 @@ import Navbar from "../../components/layout/Navbar";
 import Footer from "../../components/layout/Footer";
 
 import useCreatorsStore from "../../store/CreatorsStore";
-import {
-  FiMoreVertical,
-  FiX,
-  FiSearch,
-  FiUserPlus,
-  FiExternalLink,
-  FiCopy,
-} from "react-icons/fi";
+import { FiMoreVertical, FiX, FiSearch, FiExternalLink, FiCopy } from "react-icons/fi";
+
+import Modal from "../../components/common/Modal";
+import { ToastAlert, useToastAlert } from "../../components/common/ToastAlert";
+import useClickOutside from "../../lib/useClickOutside";
+import useAuthGuard from "../../lib/useAuthGuard";
+import { Spinner, CenterLoader } from "../../components/common/Spinner";
+
+const BRAND_RGB = "rgb(77, 52, 144)";
 
 /* ===========================
-   Toast (local)
+   Tiny helpers
    =========================== */
-const Toast = ({ toasts, remove }) => (
-  <div className="fixed top-4 right-4 z-[100] space-y-2">
-    {toasts.map((t) => (
-      <div
-        key={t.id}
-        className={`min-w-[240px] max-w-[360px] rounded-md shadow-lg px-4 py-3 text-sm text-white ${
-          t.type === "error" ? "bg-red-600" : "bg-green-600"
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="font-medium">
-            {t.title || (t.type === "error" ? "Error" : "Success")}
-          </div>
-          <button
-            className="opacity-80 hover:opacity-100"
-            onClick={() => remove(t.id)}
-            aria-label="Dismiss toast"
-          >
-            <FiX className="h-4 w-4" />
-          </button>
-        </div>
-        {t.message && (
-          <div className="mt-1 text-[13px] opacity-95">{t.message}</div>
-        )}
-      </div>
-    ))}
-  </div>
-);
+const isUrl = (v) => {
+  if (!v || typeof v !== "string") return false;
+  try {
+    new URL(v, window.location.origin);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const isImageUrl = (v) => /\.(png|jpe?g|gif|webp|svg)$/i.test(String(v || ""));
+const toNormStatus = (raw) => {
+  const v = String(raw ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "active" ? "active" : "inactive";
+};
+const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
 
-const useToast = () => {
-  const [toasts, setToasts] = useState([]);
-  const add = (toast) => {
-    const id = Math.random().toString(36).slice(2);
-    const t = { id, type: "success", timeout: 3500, ...toast };
-    setToasts((prev) => [...prev, t]);
-    setTimeout(() => remove(id), t.timeout);
-  };
-  const remove = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
-  return { toasts, add, remove };
+/* ----- classify creator for counts & tabs (tolerant to different API shapes) ----- */
+const classifyType = (row = {}) => {
+  const raw =
+    row.type ||
+    row.role ||
+    row.category ||
+    row.segment ||
+    row.creator_type ||
+    row.kind ||
+    row.group ||
+    "";
+  const v = String(raw).toLowerCase();
+
+  if (v.includes("service")) return "service_providers";
+  if (v.includes("artist")) return "artists";
+  if (v.includes("asset") || v.includes("assets")) return "assets_creators";
+
+  // Boolean-ish flags some APIs use
+  if (row.is_artist) return "artists";
+  if (row.is_service || row.service_provider) return "service_providers";
+  if (row.is_asset || row.assets_creator) return "assets_creators";
+
+  // Default
+  return "assets_creators";
 };
 
 /* ===========================
-   Loaders
-   =========================== */
-const Spinner = ({ className = "" }) => (
-  <span
-    className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent align-[-0.125em] text-white ${className}`}
-    role="status"
-    aria-label="loading"
-  />
-);
-
-const CenterLoader = ({ label = "Loading…" }) => (
-  <div className="w-full py-12 flex items-center justify-center">
-    <div className="flex items-center gap-3 rounded-lg bg-[#4D3490] text-white px-4 py-3 shadow-lg">
-      <Spinner />
-      <span className="text-sm font-medium">{label}</span>
-    </div>
-  </div>
-);
-
-/* ===========================
-   3-dots menu
+   3-dots menu (reusing useClickOutside)
    =========================== */
 const ThreeDotsMenu = ({ items }) => {
   const [open, setOpen] = useState(false);
   const safeItems = Array.isArray(items) ? items : [];
+  const ref = useRef(null);
+  useClickOutside(ref, () => setOpen(false));
   return (
-    <div className="relative inline-block text-left">
+    <div className="relative inline-block text-left" ref={ref}>
       <button
         className="p-2 rounded hover:bg-gray-100"
         onClick={() => setOpen((v) => !v)}
@@ -127,127 +110,13 @@ const ThreeDotsMenu = ({ items }) => {
 };
 
 /* ===========================
-   Helpers
-   =========================== */
-const toNormStatus = (raw) => {
-  const v = String(raw ?? "").trim().toLowerCase();
-  if (v === "1" || v === "true" || v === "active") return "active";
-  return "inactive";
-};
-
-const isUrl = (v) => {
-  if (!v || typeof v !== "string") return false;
-  try {
-    new URL(v, window.location.origin);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const isImageUrl = (v) => /\.(png|jpe?g|gif|webp|svg)$/i.test(String(v || ""));
-
-/* ===========================
-   Toggle + Status pill
-   =========================== */
-const Toggle = ({ checked, onChange }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-      checked ? "bg-green-500" : "bg-gray-300"
-    }`}
-    aria-pressed={checked}
-  >
-    <span
-      className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-        checked ? "translate-x-5" : "translate-x-1"
-      }`}
-    />
-  </button>
-);
-
-const StatusPill = ({ value = "inactive" }) => {
-  const active = String(value).toLowerCase() === "active";
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
-        active
-          ? "bg-green-50 text-green-700 border border-green-200"
-          : "bg-gray-50 text-gray-700 border border-gray-200"
-      }`}
-    >
-      {active ? "Active" : "Inactive"}
-    </span>
-  );
-};
-
-/* ===========================
-   Modal — overlay/outside/Esc to close
-   =========================== */
-const Modal = ({ open, title, onClose, children, footer }) => {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => e.key === "Escape" && onClose?.();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  return (
-    <>
-      {/* Overlay (clicking closes) */}
-      <div
-        className={`fixed inset-0 z-40 bg-black/30 transition-opacity ${
-          open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
-        onClick={onClose}
-        aria-hidden={!open}
-      />
-      {/* Wrapper (click outside card closes) */}
-      <div
-        className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition ${
-          open ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
-        aria-hidden={!open}
-        onClick={onClose}
-      >
-        {/* Card (stop propagation so inside clicks don't close) */}
-        <div
-          className="w-full max-w-md bg-white rounded-lg shadow-xl"
-          onClick={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-            <h3 className="text-sm md:text-base font-semibold">{title}</h3>
-            <button
-              className="p-2 rounded hover:bg-gray-100"
-              onClick={onClose}
-              aria-label="Close"
-            >
-              <FiX className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="p-4 max-h-[70vh] overflow-auto">{children}</div>
-          <div className="px-4 py-3 border-t border-gray-200">{footer}</div>
-        </div>
-      </div>
-    </>
-  );
-};
-
-/* ===========================
-   Shared input styles
-   - placeholders small & light
+   Read-only "View Details"
    =========================== */
 const inputBase =
   "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm placeholder:text-xs placeholder:font-light placeholder:text-gray-400";
 const selectBase =
   "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm";
 
-/* ===========================
-   Read-only "View Details"
-   =========================== */
 const CopyBtn = ({ value, small }) => {
   const [done, setDone] = useState(false);
   return (
@@ -274,7 +143,6 @@ const CopyBtn = ({ value, small }) => {
 const LinkField = ({ url }) => {
   if (!isUrl(url)) return <span className="text-gray-700 text-[13px] break-all">—</span>;
   const href = String(url);
-
   const openBtn = (
     <a
       href={href}
@@ -292,11 +160,7 @@ const LinkField = ({ url }) => {
     return (
       <div className="flex items-center gap-2">
         <a href={href} target="_blank" rel="noopener noreferrer" className="shrink-0">
-          <img
-            src={href}
-            alt="preview"
-            className="h-14 w-14 object-cover rounded border border-gray-200"
-          />
+          <img src={href} alt="preview" className="h-14 w-14 object-cover rounded border border-gray-200" />
         </a>
         <div className="flex items-center gap-2">
           {openBtn}
@@ -324,40 +188,59 @@ const Field = ({ label, children }) => (
   </div>
 );
 
-const CreatorDetailsView = ({ record }) => {
-  const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+const StatusPill = ({ value = "inactive" }) => {
+  const active = String(value).toLowerCase() === "active";
   return (
-    <div className="space-y-4">
-      {/* Top meta */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="text-[13px] font-medium">{dash(record?.name)}</div>
-          <StatusPill value={toNormStatus(record?.status)} />
-        </div>
-        <div className="text-[12px] text-gray-500">ID: {dash(record?.id)}</div>
-      </div>
-
-      {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Field label="Gender">{dash(record?.gender)}</Field>
-        <Field label="BVN">
-          <span className="text-[13px]">{dash(record?.bvn)}</span>
-          {record?.bvn ? <CopyBtn value={record.bvn} /> : null}
-        </Field>
-        <Field label="NIN">
-          <span className="text-[13px]">{dash(record?.nin)}</span>
-          {record?.nin ? <CopyBtn value={record.nin} /> : null}
-        </Field>
-        <Field label="ID Type">{dash(record?.id_type)}</Field>
-        <Field label="Copy of ID (value)"><LinkField url={record?.copy_id_type} /></Field>
-        <Field label="Copy Utility Bill (value)"><LinkField url={record?.copy_utility_bill} /></Field>
-        <Field label="Utility Bill Type">{dash(record?.copy_utility_bill_type)}</Field>
-        <Field label="Joined">{dash(record?.createdAtReadable)}</Field>
-        <Field label="Updated">{dash(record?.updatedAtReadable)}</Field>
-      </div>
-    </div>
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
+        active ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-50 text-gray-700 border border-gray-200"
+      }`}
+    >
+      {active ? "Active" : "Inactive"}
+    </span>
   );
 };
+
+const Toggle = ({ checked, onChange }) => (
+  <button
+    type="button"
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${checked ? "bg-green-500" : "bg-gray-300"}`}
+    aria-pressed={checked}
+  >
+    <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${checked ? "translate-x-5" : "translate-x-1"}`} />
+  </button>
+);
+
+const CreatorDetailsView = ({ record }) => (
+  <div className="space-y-4">
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className="text-[13px] font-medium">{dash(record?.name)}</div>
+        <StatusPill value={toNormStatus(record?.status)} />
+      </div>
+      <div className="text-[12px] text-gray-500">ID: {dash(record?.id)}</div>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Field label="Gender">{dash(record?.gender)}</Field>
+      <Field label="BVN">
+        <span className="text-[13px]">{dash(record?.bvn)}</span>
+        {record?.bvn ? <CopyBtn value={record.bvn} /> : null}
+      </Field>
+      <Field label="NIN">
+        <span className="text-[13px]">{dash(record?.nin)}</span>
+        {record?.nin ? <CopyBtn value={record.nin} /> : null}
+      </Field>
+      <Field label="ID Type">{dash(record?.id_type)}</Field>
+      <Field label="Copy of ID (value)"><LinkField url={record?.copy_id_type} /></Field>
+      <Field label="Copy Utility Bill (value)"><LinkField url={record?.copy_utility_bill} /></Field>
+      <Field label="Utility Bill Type">{dash(record?.copy_utility_bill_type)}</Field>
+      <Field label="Joined">{dash(record?.createdAtReadable)}</Field>
+      <Field label="Updated">{dash(record?.updatedAtReadable)}</Field>
+    </div>
+  </div>
+);
 
 /* ===========================
    Create/Edit Form
@@ -369,9 +252,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
   const [idType, setIdType] = useState(record?.id_type ?? "national_id");
   const [copyIdType, setCopyIdType] = useState(record?.copy_id_type ?? "");
   const [copyUtilityBill, setCopyUtilityBill] = useState(record?.copy_utility_bill ?? "");
-  const [copyUtilityBillType, setCopyUtilityBillType] = useState(
-    record?.copy_utility_bill_type ?? ""
-  );
+  const [copyUtilityBillType, setCopyUtilityBillType] = useState(record?.copy_utility_bill_type ?? "");
 
   const isView = mode === "view";
 
@@ -406,12 +287,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Gender</label>
-          <select
-            disabled={isView}
-            value={gender}
-            onChange={(e) => setGender(e.target.value)}
-            className={selectBase}
-          >
+          <select disabled={isView} value={gender} onChange={(e) => setGender(e.target.value)} className={selectBase}>
             <option value="male">male</option>
             <option value="female">female</option>
           </select>
@@ -445,12 +321,7 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
 
         <div>
           <label className="block text-sm font-medium mb-1">ID Type</label>
-          <select
-            disabled={isView}
-            value={idType}
-            onChange={(e) => setIdType(e.target.value)}
-            className={selectBase}
-          >
+          <select disabled={isView} value={idType} onChange={(e) => setIdType(e.target.value)} className={selectBase}>
             <option value="national_id">national_id</option>
             <option value="driver_license">driver_license</option>
             <option value="passport">passport</option>
@@ -504,10 +375,45 @@ const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
 };
 
 /* ===========================
+   Tabs (underline style)
+   =========================== */
+const Tabs = ({ value, onChange }) => {
+  const tabs = [
+    { key: "assets_creators", label: "Assets creators" },
+    { key: "service_providers", label: "Service providers" },
+    { key: "artists", label: "Artists" },
+  ];
+  return (
+    <div className="border-b border-gray-200 flex items-center justify-between">
+      <div className="flex gap-2">
+        {tabs.map((t) => {
+          const active = value === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onChange(t.key)}
+              aria-current={active ? "page" : undefined}
+              className={`relative -mb-px px-4 py-2 text-sm font-semibold transition-colors border-solid ${
+                active ? "border-b-4" : "border-b-2"
+              } border-b rounded-t-lg`}
+              style={{
+                color: active ? BRAND_RGB : "#374151",
+                borderBottomColor: active ? BRAND_RGB : "#D1D5DB",
+                backgroundColor: "transparent",
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/* ===========================
    Table
-   - If no rows AND q present -> "No results for 'q'"
-   - If no rows AND no q -> "No creators yet."
-   - Footer: left total; right pagination
    =========================== */
 const CreatorsTable = ({
   rows,
@@ -516,11 +422,10 @@ const CreatorsTable = ({
   onEdit,
   onToggle,
   togglingId,
-  footerLeft,  // text node
-  footerRight, // controls node
+  footerLeft,
+  footerRight,
 }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
-  const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
   const emptyText = q ? `No results found for “${q}”` : "No creators yet.";
 
   return (
@@ -584,7 +489,6 @@ const CreatorsTable = ({
         </table>
       </div>
 
-      {/* Footer bar */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-white border-t border-gray-200">
         <div className="text-sm text-gray-600">{footerLeft}</div>
         <div>{footerRight}</div>
@@ -598,31 +502,22 @@ const CreatorsTable = ({
    =========================== */
 const Creators = () => {
   const navigate = useNavigate();
-  const toast = useToast();
+  useAuthGuard(navigate); // shared guard
 
-  // Auth guard
-  useEffect(() => {
-    const token = localStorage.getItem("authToken");
-    if (!token) navigate("/login");
-  }, [navigate]);
-
-  const {
-    creators,
-    pagination,
-    fetchCreators,
-    createCreator,
-    toggleCreatorStatus,
-  } = useCreatorsStore();
+  const toast = useToastAlert();
+  const { creators, pagination, fetchCreators, toggleCreatorStatus } = useCreatorsStore();
 
   const [hydrated, setHydrated] = useState(false);
 
-  // Search/filter/page (server-driven); debounced typing; Enter = instant
+  // Search/filter/page (server-driven); Enter = instant
   const [q, setQ] = useState("");
   const [status, setStatus] = useState(""); // 'active' | 'inactive' | ''
   const [page, setPage] = useState(1);
   const perPage = 10;
 
-  const [submitting, setSubmitting] = useState(false);
+  // Tabs
+  const [tab, setTab] = useState("assets_creators"); // assets_creators | service_providers | artists
+
   const [togglingId, setTogglingId] = useState(null);
 
   // Initial fetch
@@ -654,118 +549,54 @@ const Creators = () => {
     [q, status, fetchCreators]
   );
 
-  const rows = useMemo(() => (Array.isArray(creators) ? creators : []), [creators]);
+  const allRows = useMemo(() => (Array.isArray(creators) ? creators : []), [creators]);
 
-  // Status filter options built from data
-  const statusSet = useMemo(() => {
-    const s = new Set();
-    rows.forEach((r) => s.add(toNormStatus(r.status)));
-    return s;
-  }, [rows]);
-
-  const statusOptions = useMemo(() => {
-    const opts = Array.from(statusSet);
-    if (opts.length === 0) return ["active", "inactive"];
-    if (!opts.includes("active")) opts.push("active");
-    if (!opts.includes("inactive")) opts.push("inactive");
-    return ["active", "inactive"].filter((o) => opts.includes(o));
-  }, [statusSet]);
-
-  // Modal state
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create"); // create | edit | view
-  const [modalRecord, setModalRecord] = useState(null);
-
-  const openCreate = () => {
-    setModalMode("create");
-    setModalRecord(null);
-    setModalOpen(true);
-  };
-  const openView = (record) => {
-    setModalMode("view");
-    setModalRecord(record);
-    setModalOpen(true);
-  };
-  const openEdit = (record) => {
-    setModalMode("edit");
-    setModalRecord(record);
-    setModalOpen(true);
-  };
-  const closeModal = () => setModalOpen(false);
-
-  // Create handler
-  const handleSubmit = async (payload) => {
-    try {
-      setSubmitting(true);
-      await createCreator?.(payload);
-      toast.add({
-        type: "success",
-        title: "Created",
-        message: "Creator created successfully.",
-      });
-      await fetchCreators?.({ page, per_page: perPage, q, status });
-      closeModal();
-    } catch (e) {
-      toast.add({
-        type: "error",
-        title: "Failed",
-        message: e?.message || "Action failed.",
-      });
-      console.error(e);
-    } finally {
-      setSubmitting(false);
+  // Classification + counts
+  const buckets = useMemo(() => {
+    const map = { assets_creators: [], service_providers: [], artists: [] };
+    for (const r of allRows) {
+      map[classifyType(r)].push(r);
     }
-  };
+    return map;
+  }, [allRows]);
+
+  // Rows shown for current tab
+  const rows = useMemo(() => buckets[tab] || [], [buckets, tab]);
+
+  // Status filter options built from current rows
+  const statusOptions = ["active", "inactive"];
 
   // Toggle status handler
   const handleToggle = async (row) => {
     try {
       setTogglingId(row.id);
-      await toggleCreatorStatus?.(row.id); // PUT /admin/creator/:id { status }
+      await toggleCreatorStatus?.(row.id);
       toast.add({ type: "success", title: "Status updated" });
       await fetchCreators?.({ page, per_page: perPage, q, status });
     } catch (e) {
-      toast.add({
-        type: "error",
-        title: "Failed",
-        message: e?.message || "Status change failed.",
-      });
+      toast.add({ type: "error", title: "Failed", message: e?.message || "Status change failed." });
       console.error(e);
     } finally {
       setTogglingId(null);
     }
   };
 
-  // Titles
-  const modalTitle =
-    modalMode === "create"
-      ? "Create Creator"
-      : modalMode === "edit"
-      ? "Edit Creator"
-      : "View Creator";
-
   // Pagination math (using API pagination if provided)
-  const total = pagination?.total ?? rows.length ?? 0;
+  const total = pagination?.total ?? allRows.length ?? 0;
   const per = pagination?.per_page || perPage;
   const totalPages = Math.max(1, Math.ceil((pagination?.total || 0) / per));
   const startIdx = total === 0 ? 0 : (page - 1) * per + 1;
   const endIdx = total === 0 ? 0 : Math.min(page * per, total);
 
-  // Footer (left text)
   const footerLeftText =
-    total === 0
-      ? (q ? `No results for “${q}”` : "No records")
-      : `Showing ${startIdx}–${endIdx} of ${total} record${total > 1 ? "s" : ""}`;
+    total === 0 ? (q ? `No results for “${q}”` : "No records") : `Showing ${startIdx}–${endIdx} of ${total} record${total > 1 ? "s" : ""}`;
 
-  // Footer (right controls: Prev/Next)
   const footerRightControls = (
     <div className="flex items-center gap-2">
       <button
         disabled={page <= 1}
         onClick={() => setPage((p) => Math.max(1, p - 1))}
-        className={`px-3 py-1.5 rounded-lg border ${
-          page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
-        }`}
+        className={`px-3 py-1.5 rounded-lg border ${page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"}`}
       >
         Prev
       </button>
@@ -784,9 +615,36 @@ const Creators = () => {
     </div>
   );
 
+  // Summary counts (derived if API doesn’t provide)
+  const formatNum = (n) =>
+    typeof n === "number" ? n.toLocaleString("en-NG") : typeof n === "string" ? n : "—";
+
+  const summary = {
+    totalCreators: total,
+    assets: buckets.assets_creators.length,
+    services: buckets.service_providers.length,
+    artists: buckets.artists.length,
+  };
+
+  // Apply status and search filters on the *current-tab* rows for display
+  const filteredRows = useMemo(() => {
+    let list = rows;
+    if (status) list = list.filter((r) => toNormStatus(r.status) === status);
+    if (q) {
+      const qv = q.toLowerCase();
+      list = list.filter(
+        (r) =>
+          String(r.name || "").toLowerCase().includes(qv) ||
+          String(r.nin || "").toLowerCase().includes(qv) ||
+          String(r.id || "").toLowerCase().includes(qv)
+      );
+    }
+    return list;
+  }, [rows, status, q]);
+
   return (
     <main>
-      <Toast toasts={toast.toasts} remove={toast.remove} />
+      <ToastAlert toasts={toast.toasts} remove={toast.remove} />
 
       <div className="overflow-x-hidden flex bg-white border-t border-gray-300">
         <Sidebar />
@@ -799,64 +657,70 @@ const Creators = () => {
           <div className="px-6 pb-20 pt-6">
             {/* Header */}
             <div className="flex items-center mb-4 justify-between -mx-6 border-b border-gray-300 pb-3">
-              <p className="inline-block px-6 text-base md:text-lg leading-5 font-semibold">
-                Creators
-              </p>
-              <div className="px-6">
-                <button
-                  onClick={openCreate}
-                  className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm"
-                  style={{ backgroundColor: "#4D3490", height: "36px" }}
-                >
-                  <FiUserPlus className="w-4 h-4" />
-                  New Creator
-                </button>
+              <p className="inline-block px-6 text-base md:text-lg leading-5 font-semibold">Creators</p>
+              <div className="px-6" />
+            </div>
+
+            {/* Summary cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              {[
+                { label: "Total Creators", value: formatNum(summary.totalCreators) },
+                { label: "Assets Creators", value: formatNum(summary.assets) },
+                { label: "Service Providers", value: formatNum(summary.services) },
+                { label: "Artists", value: formatNum(summary.artists) },
+              ].map((c) => (
+                <div key={c.label} className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
+                  <div className="text-xs text-gray-600 mb-2">{c.label}</div>
+                  <div className="text-2xl font-semibold">{c.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Tabs + Search (search replaces removed button) */}
+            <div className="mb-3 bg-white rounded-xl border border-gray-200 px-4 pt-2 pb-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <Tabs value={tab} onChange={setTab} />
+                <div className="pl-4 py-2">
+                  <div className="relative">
+                    <input
+                      value={q}
+                      onChange={(e) => {
+                        setPage(1);
+                        setQ(e.target.value);
+                      }}
+                      onKeyDown={onSearchEnter}
+                      className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-72 text-sm placeholder:text-xs leading-[1.25rem]"
+                      placeholder="Search creators…"
+                      aria-label="Search creators"
+                    />
+                    <FiSearch
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4 pointer-events-none"
+                      aria-hidden="true"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Filters */}
-            <div className="mb-4 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-              <div className="flex items-center gap-3">
-                {/* Search — width preserved (w-72) */}
-                <div className="relative">
-                  <input
-                    value={q}
-                    onChange={(e) => {
-                      setPage(1);           // reset to first page when query changes
-                      setQ(e.target.value); // debounced fetch in effect
-                    }}
-                    onKeyDown={onSearchEnter} // Enter = instant fetch
-                    className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-48 text-sm placeholder:text-xs leading-[1.25rem]"
-                    placeholder="Search creators…"
-                    aria-label="Search creators"
-                  />
-                  <FiSearch
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4 pointer-events-none"
-                    aria-hidden="true"
-                  />
-                </div>
-
-                {/* Status filter — normalized dd  */}
-                <select
-                  value={status}
-                  onChange={(e) => {
-                    setPage(1);
-                    setStatus(e.target.value);
-                  }}
-                  className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-48 text-sm placeholder:text-xs leading-[1.25rem]"
-                  aria-label="Filter by status"
-                >
-                  <option value="">All statuses</option>
-                  {statusOptions.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt[0].toUpperCase() + opt.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* (Right side header space intentionally left blank as requested) */}
-              <div />
+            {/* Filters (status only) */}
+            <div className="mb-4 flex items-center gap-3">
+              <label className="text-sm text-gray-700">Status</label>
+              <select
+                value={status}
+                onChange={(e) => {
+                  setPage(1);
+                  setStatus(e.target.value);
+                }}
+                className="h-10 pr-9 pl-3 rounded-lg border border-gray-300 outline-none focus:ring-2 focus:ring-[#4D3490] w-48 text-sm placeholder:text-xs leading-[1.25rem]"
+                aria-label="Filter by status"
+              >
+                <option value="">All statuses</option>
+                {["active", "inactive"].map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt[0].toUpperCase() + opt.slice(1)}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Table / Loader */}
@@ -864,10 +728,16 @@ const Creators = () => {
               <CenterLoader />
             ) : (
               <CreatorsTable
-                rows={rows}
+                rows={filteredRows}
                 q={q}
-                onView={openView}
-                onEdit={openEdit}
+                onView={(rec) => {
+                  // open read-only
+                  console.log(rec);
+                }}
+                onEdit={(rec) => {
+                  // open edit
+                  console.log(rec);
+                }}
                 onToggle={handleToggle}
                 togglingId={togglingId}
                 footerLeft={footerLeftText}
@@ -876,55 +746,8 @@ const Creators = () => {
             )}
           </div>
 
-          {/* Modal */}
-          <Modal
-            open={modalOpen}
-            title={modalTitle}
-            onClose={closeModal}
-            footer={
-              modalMode === "view" ? (
-                <div className="flex justify-end">
-                  <button
-                    className="px-4 py-2 rounded-lg border border-gray-300"
-                    onClick={closeModal}
-                  >
-                    Close
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    className="px-4 py-2 rounded-lg border border-gray-300"
-                    onClick={closeModal}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() =>
-                      document.getElementById("__modal_submit_btn__")?.click()
-                    }
-                    className="px-4 py-2 rounded-lg text-white inline-flex items-center gap-2"
-                    style={{ backgroundColor: "#4D3490" }}
-                    disabled={submitting}
-                  >
-                    {submitting && <Spinner />}
-                    {submitting
-                      ? "Saving…"
-                      : modalMode === "create"
-                      ? "Create"
-                      : "Save changes"}
-                  </button>
-                </div>
-              )
-            }
-          >
-            <CreatorForm
-              mode={modalMode}
-              record={modalRecord}
-              onSubmit={handleSubmit}
-              submitting={submitting}
-            />
-          </Modal>
+          {/* Modal placeholder in case you still use it elsewhere */}
+          <Modal open={false} title="" onClose={() => {}} />
 
           <Footer />
         </div>

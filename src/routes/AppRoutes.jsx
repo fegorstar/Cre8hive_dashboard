@@ -8,13 +8,29 @@ import Investments from '../pages/dashboard/Investments';
 import Reports from '../pages/dashboard/Reports';
 import ServiceCategories from '../pages/dashboard/ServiceCategories';
 import Creators from '../pages/dashboard/Creators';
-import Members from '../pages/dashboard/Members'; // ✅ NEW
+import Members from '../pages/dashboard/Members';
+import Disputes from '../pages/dashboard/Disputes'; // 👈 NEW
+import Reviews from '../pages/dashboard/Reviews';
+import Settings from "../pages/dashboard/Settings";
+import Transactions from "../pages/dashboard/Transactions";
+import Profile from "../pages/dashboard/Profile";
+
 
 import useAuthStore from '../store/authStore';
 
+/**
+ * ✅ IMPORTANT:
+ * Select primitives only to avoid returning a fresh object each render.
+ */
 const ProtectedRoute = ({ children }) => {
-  const { isAuthenticated } = useAuthStore((s) => s);
-  if (!isAuthenticated) return <Navigate to="/" replace />;
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const token = useAuthStore((s) => s.token);
+
+  // Allow access if there's a token either in store or localStorage (handles refresh)
+  const tokenFromStorage = token || localStorage.getItem('authToken');
+  const allowed = Boolean(tokenFromStorage);
+
+  if (!allowed || !isAuthenticated) return <Navigate to="/" replace />;
   return children;
 };
 
@@ -61,14 +77,56 @@ const router = createBrowserRouter([
     ),
   },
   {
-    path: '/members', // ✅ NEW ROUTE
+    path: '/members',
     element: (
       <ProtectedRoute>
         <Members />
       </ProtectedRoute>
     ),
   },
-  // optional catch-all:
+  {
+    path: '/disputes', // 👈 NEW
+    element: (
+      <ProtectedRoute>
+        <Disputes />
+      </ProtectedRoute>
+    ),
+  },
+
+  {
+    path: '/reviews',
+    element: (
+      <ProtectedRoute>
+        <Reviews />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: "/settings",
+    element: (
+      <ProtectedRoute>
+        <Settings />
+      </ProtectedRoute>
+    ),
+  },
+
+  {
+    path: "/transactions",
+    element: (
+      <ProtectedRoute>
+        <Transactions />
+      </ProtectedRoute>
+    ),
+  },
+
+  {
+    path: '/profile',
+    element: (
+      <ProtectedRoute>
+        <Profile />
+      </ProtectedRoute>
+    ),
+  },
   // { path: '*', element: <Navigate to="/dashboard" replace /> },
 ]);
 

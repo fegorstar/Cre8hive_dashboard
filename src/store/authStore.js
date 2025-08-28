@@ -1,48 +1,44 @@
 // src/store/authStore.js
-import { create } from 'zustand';
-import axios from 'axios';
-import { BASE_URL } from '../config';
+// Auth state using Zustand.
+// - Matches your login response: { message, token, user }.
+// - Persists token/user in localStorage.
+// - Exposes login() & logout().
+// - Rehydrates on app start so refresh keeps you logged in.
 
-// Helper: set/clear global Authorization header for axios
+import { create } from "zustand";
+import apiClient from "../lib/apiClient"; // <-- unified HTTP client
+
+// (Optional fallback) Set global header for any stray axios usage you might have.
+// The main path is apiClient which already injects Authorization for each request.
 const setAuthHeader = (token) => {
-  if (token) {
-    axios.defaults.baseURL = BASE_URL;
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-  } else {
-    delete axios.defaults.headers.common['Authorization'];
-  }
+  // Intentionally left minimal; prefer apiClient everywhere.
 };
 
 const useAuthStore = create((set, get) => ({
   // ---------- STATE ----------
   isAuthenticated: false,
   user: null,
-  token: localStorage.getItem('authToken') || null,
+  token: localStorage.getItem("authToken") || null,
 
   // ---------- ACTIONS ----------
-  // Initialize from localStorage (called at the bottom on store init)
+  // Rehydrate from localStorage (called once at the bottom)
   loadStoredAuthData: () => {
-    const token = localStorage.getItem('authToken');
-    const rawUser = localStorage.getItem('user');
+    const token = localStorage.getItem("authToken");
+    const rawUser = localStorage.getItem("user");
 
     try {
-      const user =
-        rawUser && rawUser !== 'undefined' ? JSON.parse(rawUser) : null;
+      const user = rawUser && rawUser !== "undefined" ? JSON.parse(rawUser) : null;
 
-      if (token && user) {
+      if (token) {
         set({ isAuthenticated: true, user, token });
-        setAuthHeader(token);
-      } else if (token && !user) {
-        // If only token exists, still allow (some endpoints might fetch user later)
-        set({ isAuthenticated: true, user: null, token });
         setAuthHeader(token);
       } else {
         set({ isAuthenticated: false, user: null, token: null });
         setAuthHeader(null);
       }
     } catch {
-      // Corrupt user in storage; clear it and continue with token-only if present
-      localStorage.removeItem('user');
+      // Corrupt user JSON → clear it; keep token if present
+      localStorage.removeItem("user");
       if (token) {
         set({ isAuthenticated: true, user: null, token });
         setAuthHeader(token);
@@ -54,41 +50,51 @@ const useAuthStore = create((set, get) => ({
   },
 
   // Login with email/password
+  // Your API returns:
+  // {
+  //   "message": "Admin login successful",
+  //   "token": "6|xxxx",
+  //   "user": { ... }
+  // }
   login: async (email, password) => {
-    const res = await axios.post(`${BASE_URL}/admin/login`, { email, password });
-    const { access_token, admin } = res.data;
+    const res = await apiClient.post(`/admin/login`, { email, password });
+    const { token, user } = res.data || {};
 
-    // Persist
-    localStorage.setItem('authToken', access_token);
-    localStorage.setItem('user', JSON.stringify(admin ?? null));
+    if (!token) {
+      throw new Error("Login response missing token");
+    }
 
-    // Set global header for subsequent requests
-    setAuthHeader(access_token);
+    // Persist to localStorage (used by router + apiClient)
+    localStorage.setItem("authToken", token);
+    localStorage.setItem("user", JSON.stringify(user ?? null));
 
     // Update store
     set({
       isAuthenticated: true,
-      user: admin ?? null,
-      token: access_token,
+      user: user ?? null,
+      token,
     });
 
-    return { message: 'Login successful' };
+    // (Optional) set global header for any stray axios usage
+    setAuthHeader(token);
+
+    return { message: "Login successful" };
   },
 
   // Logout everywhere
   logout: () => {
     try {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('user');
+      localStorage.removeItem("authToken");
+      localStorage.removeItem("user");
       set({ isAuthenticated: false, user: null, token: null });
       setAuthHeader(null);
     } catch (error) {
-      console.error('Error logging out:', error);
+      console.error("Error logging out:", error);
     }
   },
 }));
 
-// Run loader on store init so refresh keeps you logged in
+// Rehydrate on store init so refresh keeps you logged in
 useAuthStore.getState().loadStoredAuthData();
 
 export default useAuthStore;
