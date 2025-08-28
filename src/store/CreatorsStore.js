@@ -3,9 +3,10 @@
 //   LIST:   GET {BASE_URL}/admin/user/creators?page=1
 //           GET {BASE_URL}/admin/user/creators?search=JohnDoe&active=true
 //   SINGLE: GET {BASE_URL}/admin/user/creators/:id
+//   UPDATE: POST {BASE_URL}/admin/user/creators/update/:id
+//   STATUS: POST {BASE_URL}/admin/user/creators/status/:id  (body: { active: true|false })
 // Notes:
-//   - Create/Update/Toggle still on /admin/creator/* (as before).
-//   - Tolerant extraction + decoration for "creator-with-nested-user" AND "user-with-nested-creator".
+//   - This store now posts ONLY creator fields for updates (no nested user).
 
 import { create } from 'zustand';
 import axios from 'axios';
@@ -86,7 +87,7 @@ const decorateCreator = (raw = {}) => {
   const user = norm.user && typeof norm.user === 'object' ? normalizeIds(norm.user) : {};
   const creator = norm.creator && typeof norm.creator === 'object' ? normalizeIds(norm.creator) : norm; // top-level is creator in your payload
 
-  // Name
+  // Name (read-only in this page)
   const fullName =
     norm.name ||
     `${norm.first_name ?? ''} ${norm.last_name ?? ''}`.trim() ||
@@ -112,20 +113,19 @@ const decorateCreator = (raw = {}) => {
   const nin = norm.nin ?? user.nin ?? creator.nin ?? undefined;
   const bvn = norm.bvn ?? user.bvn ?? creator.bvn ?? undefined;
 
-  // Status: prefer boolean "active" (top-level or in nested), fallback to string status
+  // Status
   const activeFlag =
     norm.active ?? creator.active ?? user.active ?? (toNormStatus(norm.status) === 'active');
 
   return {
-    ...norm, // keep original fields (services, bookings, etc.)
-    user,    // keep nested user handy
+    ...norm,
+    user,
     name: fullName,
     email,
     phone,
     gender,
     nin,
     bvn,
-    // unified status for UI
     status: toNormStatus(activeFlag ? 'active' : 'inactive'),
     createdAtReadable: formatReadableDate(
       norm.created_at || creator.created_at || user.created_at || norm.createdAt
@@ -134,6 +134,15 @@ const decorateCreator = (raw = {}) => {
       norm.updated_at || creator.updated_at || user.updated_at || norm.updatedAt
     ),
   };
+};
+
+// Helper: strip undefined keys before sending
+const pruneUndefined = (obj = {}) => {
+  const copy = { ...obj };
+  Object.keys(copy).forEach((k) => {
+    if (copy[k] === undefined) delete copy[k];
+  });
+  return copy;
 };
 
 // Restore cache
@@ -148,16 +157,8 @@ const useCreatorsStore = create((set, get) => ({
   loading: false,
   error: null,
 
-  // currently viewed single creator (for the View modal / detail page)
   currentCreator: null,
 
-  /**
-   * LIST (server)
-   * GET /admin/user/creators?page=…&search=…&active=true|false
-   * UI passes: { page, per_page, q, status }
-   *   - q -> search
-   *   - status 'active'|'inactive' -> active true|false
-   */
   fetchCreators: async (params = {}) => {
     set({ loading: true, error: null });
     try {
@@ -171,13 +172,12 @@ const useCreatorsStore = create((set, get) => ({
       const res = await api.get('/admin/user/creators', {
         params: {
           page,
-          per_page,          // included if supported
+          per_page,
           search: q || undefined,
           active,
         },
       });
 
-      // Expecting { data: { current_page, data:[...], total, per_page } }
       const root = res?.data?.data || {};
       const list = Array.isArray(root?.data) ? root.data : extractArray(res);
       const decorated = list.map(decorateCreator);
@@ -200,27 +200,21 @@ const useCreatorsStore = create((set, get) => ({
     }
   },
 
-  /**
-   * SINGLE (server)
-   * GET /admin/user/creators/:id
-   * Returns decorated record; also stores it in currentCreator and refreshes the list cache item (if present).
-   */
   fetchCreator: async (id) => {
     if (!id && id !== 0) throw new Error('Missing id');
-    set({ loading: true, error: null });
+    set({ error: null });
     try {
       const res = await api.get(`/admin/user/creators/${id}`);
       const raw = extractObject(res);
       if (!raw) throw new Error('Creator not found');
       const decorated = decorateCreator(raw);
 
-      // Update list cache if present
       set((state) => {
         const list = Array.isArray(state.creators) ? state.creators.slice() : [];
         const idx = list.findIndex((c) => Number(c.id) === Number(id));
         if (idx >= 0) list[idx] = { ...list[idx], ...decorated };
         localStorage.setItem('creators', JSON.stringify(list));
-        return { creators: list, currentCreator: decorated, loading: false };
+        return { creators: list, currentCreator: decorated };
       });
 
       return decorated;
@@ -228,7 +222,6 @@ const useCreatorsStore = create((set, get) => ({
       console.error('Error fetching creator:', error);
       set({
         error: error?.response?.data?.message || error.message,
-        loading: false,
       });
       throw new Error(error?.response?.data?.message || error.message);
     }
@@ -236,10 +229,6 @@ const useCreatorsStore = create((set, get) => ({
 
   clearCurrentCreator: () => set({ currentCreator: null }),
 
-  /**
-   * Create (member; fallback admin)
-   * POST /member/creator/create  (401 => fallback)  -> POST /admin/creator/create
-   */
   createCreator: async (payload) => {
     set({ loading: true, error: null });
     try {
@@ -283,25 +272,30 @@ const useCreatorsStore = create((set, get) => ({
   },
 
   /**
-   * Update (admin) — PUT /admin/creator/:id
+   * Update (admin) — CREATOR FIELDS ONLY
+   * POST /api/admin/user/creators/update/:id
    */
   updateCreator: async (id, updatedData) => {
     set({ loading: true, error: null });
     try {
-      const res = await api.put(`/admin/creator/${id}`, updatedData);
-      const updatedRaw = extractObject(res) || res?.data;
-      const decorated = decorateCreator(updatedRaw);
+      // Only send creator fields; strip undefineds
+      const body = pruneUndefined(updatedData || {});
+      const res = await api.post(`/admin/user/creators/update/${id}`, body);
+
+      const updatedRaw = extractObject(res) || res?.data || {};
+      const decorated = decorateCreator({ ...updatedRaw, ...body });
 
       set((state) => {
         const creators = (state.creators || []).map((c) =>
           Number(c.id) === Number(id) ? { ...c, ...decorated } : c
         );
         localStorage.setItem('creators', JSON.stringify(creators));
-        // keep currentCreator fresh if we are viewing it
+
         const currentCreator =
           Number(state.currentCreator?.id) === Number(id)
             ? { ...state.currentCreator, ...decorated }
             : state.currentCreator;
+
         return { creators, currentCreator, loading: false };
       });
 
@@ -317,37 +311,42 @@ const useCreatorsStore = create((set, get) => ({
   },
 
   /**
-   * Toggle status (admin) — PUT /admin/creator/:id { status: "active" | "inactive" }
+   * Toggle / Update status (admin)
+   * POST /api/admin/user/creators/status/:id
+   * body: { active: true | false }
    */
   toggleCreatorStatus: async (id) => {
-    set({ loading: true, error: null });
+    set({ error: null }); // don't block the table's global loader
     try {
-      const current = get().creators.find((c) => Number(c.id) === Number(id)) || get().currentCreator;
+      const state = get();
+      const current =
+        state.creators.find((c) => Number(c.id) === Number(id)) || state.currentCreator;
       const currentStatus = toNormStatus(current?.status);
-      const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
+      const nextActive = currentStatus !== 'active'; // invert
 
-      await api.put(`/admin/creator/${id}`, { status: nextStatus });
+      await api.post(`/admin/user/creators/status/${id}`, { active: nextActive });
 
-      set((state) => {
+      set((s) => {
         // update list
-        const creators = (state.creators || []).map((c) =>
-          Number(c.id) === Number(id) ? { ...c, status: nextStatus } : c
+        const creators = (s.creators || []).map((c) =>
+          Number(c.id) === Number(id)
+            ? { ...c, status: nextActive ? 'active' : 'inactive', active: nextActive }
+            : c
         );
         localStorage.setItem('creators', JSON.stringify(creators));
 
         // update current
         const currentCreator =
-          Number(state.currentCreator?.id) === Number(id)
-            ? { ...state.currentCreator, status: nextStatus }
-            : state.currentCreator;
+          Number(s.currentCreator?.id) === Number(id)
+            ? { ...s.currentCreator, status: nextActive ? 'active' : 'inactive', active: nextActive }
+            : s.currentCreator;
 
-        return { creators, currentCreator, loading: false };
+        return { creators, currentCreator };
       });
     } catch (error) {
       console.error('Error toggling creator status:', error);
       set({
         error: error?.response?.data?.message || error.message,
-        loading: false,
       });
       throw new Error(error?.response?.data?.message || error.message);
     }

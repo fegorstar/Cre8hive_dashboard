@@ -1,11 +1,12 @@
 // src/store/MembersStore.js
-// Endpoints:
+// Endpoints (updated):
 //  - LIST/SEARCH: GET {BASE_URL}/admin/user?role=CREATOR&search=John&page=1&per_page=10
 //  - SHOW:        GET {BASE_URL}/admin/user/{id}
-//  - UPDATE:      PUT {BASE_URL}/admin/user/{id}       (payload: arbitrary fields e.g. { status: "active"|"inactive" })
+//  - UPDATE:      POST {BASE_URL}/admin/user/{id}        (payload: arbitrary fields e.g. { name, status })
+//  - TOGGLE:      POST {BASE_URL}/admin/user/status/{id} (body: { is_active: true|false })
 // Notes:
 //  - Auth headers (Accept + Bearer)
-//  - Status normalization (1/0/true/false/strings) with tolerant derivation (status → active → creator.active)
+//  - Status normalization (1/0/true/false/strings) with tolerant derivation (status → active → creator.active → is_active)
 //  - Local cache for quick hydration
 //  - Stores `counts` from API for summary cards
 
@@ -29,8 +30,11 @@ api.interceptors.request.use((config) => {
 const toNormStatus = (raw) => {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === '1' || v === 'true' || v === 'active') return 'active';
-  return 'inactive';
+  if (v === '0' || v === 'false' || v === 'inactive') return 'inactive';
+  return v ? (v === 'yes' ? 'active' : 'inactive') : 'inactive';
 };
+
+const boolFromAny = (raw) => toNormStatus(raw) === 'active';
 
 const formatReadableDate = (iso) => {
   if (!iso) return '—';
@@ -72,19 +76,21 @@ const decorateMember = (raw = {}) => {
   const last = norm.last_name ?? norm.lastName ?? '';
   const name = (norm.name || `${first} ${last}`.trim()) || undefined;
 
-  // Derive status in priority:
-  // 1) explicit `status`
-  // 2) top-level `active`
-  // 3) nested `creator.active`
-  // leave undefined if none present (UI will derive further if needed)
-  let status;
-  if (has(norm.status)) {
-    status = toNormStatus(norm.status);
-  } else if (has(norm.active)) {
-    status = toNormStatus(norm.active);
-  } else if (has(norm?.creator?.active)) {
-    status = toNormStatus(norm.creator.active);
-  }
+  // Derive status (string) + active (bool) in priority:
+  // status → active → creator.active → is_active
+  let statusStr;
+  if (has(norm.status)) statusStr = toNormStatus(norm.status);
+  else if (has(norm.active)) statusStr = toNormStatus(norm.active);
+  else if (has(norm?.creator?.active)) statusStr = toNormStatus(norm.creator.active);
+  else if (has(norm.is_active)) statusStr = toNormStatus(norm.is_active);
+
+  const activeBool = boolFromAny(
+    has(norm.status) ? norm.status
+    : has(norm.active) ? norm.active
+    : has(norm?.creator?.active) ? norm.creator.active
+    : has(norm.is_active) ? norm.is_active
+    : false
+  );
 
   return {
     ...norm,
@@ -92,9 +98,10 @@ const decorateMember = (raw = {}) => {
     email: norm.email,
     phone: norm.phone_number || norm.phone || norm.msisdn || norm.mobile,
     member_id: norm.member_id,
-    status, // 'active' | 'inactive' | undefined
-    role: norm.role, // e.g. CREATOR, ADMIN
-    kyc_status: norm.kyc_status, // passthrough if present
+    status: statusStr,   // 'active' | 'inactive' | undefined
+    active: activeBool,  // boolean for convenience
+    role: norm.role,
+    kyc_status: norm.kyc_status,
     dob: norm.dob,
     dobReadable: formatReadableDate(norm.dob),
     createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
@@ -125,9 +132,9 @@ const useMembersStore = create((set, get) => ({
       const res = await api.get('/admin/user', {
         params: {
           page,
-          per_page,              // your API shows `per_page` in the response; send the same
+          per_page,
           role: role || undefined,
-          search: q || undefined // search param is `search`
+          search: q || undefined,
         },
       });
 
@@ -173,11 +180,11 @@ const useMembersStore = create((set, get) => ({
     }
   },
 
-  // Update arbitrary fields (admin): PUT /admin/user/{id}
+  // UPDATE (admin): POST /admin/user/{id}
   updateMember: async (id, updatedData) => {
     set({ loading: true, error: null });
     try {
-      const res = await api.put(`/admin/user/${id}`, updatedData);
+      const res = await api.post(`/admin/user/${id}`, updatedData);
       const updatedRaw = extractObject(res) || res?.data;
 
       set((state) => {
@@ -201,27 +208,32 @@ const useMembersStore = create((set, get) => ({
     }
   },
 
-  // Toggle / set status using PUT /admin/user/{id} { status: "active"|"inactive" }
+  // Toggle status: POST /admin/user/status/{id}  body: { is_active: true|false }
   toggleMemberStatus: async (id) => {
     set({ loading: true, error: null });
     try {
       const current = get().members.find((m) => Number(m.id) === Number(id));
 
-      // derive current status from any available source
-      const base =
-        (current?.status !== undefined ? current.status : undefined) ??
-        (current?.active !== undefined ? current.active : undefined) ??
-        (current?.creator?.active !== undefined ? current.creator.active : undefined) ??
-        false;
+      // derive current boolean active from any available source
+      const currentActive =
+        current?.active !== undefined
+          ? !!current.active
+          : boolFromAny(
+              (current?.status !== undefined ? current.status : undefined) ??
+              (current?.active !== undefined ? current.active : undefined) ??
+              (current?.creator?.active !== undefined ? current.creator.active : undefined) ??
+              false
+            );
 
-      const currentStatus = toNormStatus(base);
-      const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
+      const nextActive = !currentActive;
 
-      await api.put(`/admin/user/${id}`, { status: nextStatus });
+      await api.post(`/admin/user/status/${id}`, { is_active: nextActive });
 
       set((state) => {
         const members = (state.members || []).map((m) =>
-          Number(m.id) === Number(id) ? { ...m, status: nextStatus } : m
+          Number(m.id) === Number(id)
+            ? { ...m, active: nextActive, status: nextActive ? 'active' : 'inactive' }
+            : m
         );
         localStorage.setItem('members', JSON.stringify(members));
         return { members, loading: false };

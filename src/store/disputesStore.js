@@ -1,6 +1,14 @@
 // src/store/disputesStore.js
-// LIST/SHOW:   {BASE_URL}/admin/dispute[/*]
-// UPDATE/RESOLVE: POST {BASE_URL}/admin/dispute/update/{id}  body: { resolve_status: "CLOSED" | "PENDING" }
+// LIST/SHOW:
+//   GET {BASE_URL}/admin/dispute?status=PENDING|RESOLVED&page=1
+//   GET {BASE_URL}/admin/dispute/show/{id}
+// UPDATE:
+//   POST {BASE_URL}/admin/dispute/update/{id}  body: { resolve_status: "CLOSED" | "OPEN" }
+//
+// Notes:
+//   - Tabs & listing use "status" (PENDING/RESOLVED).
+//   - Updating uses "resolve_status" (OPEN/CLOSED) only.
+//   - decorateDispute(loose=true) never fills placeholders; leaves blanks so the UI doesn’t show “—”.
 
 import { create } from "zustand";
 import axios from "axios";
@@ -9,9 +17,9 @@ import { BASE_URL } from "../config";
 /* ---------- helpers ---------- */
 
 const formatReadableDateTime = (iso) => {
-  if (!iso) return "—";
+  if (!iso) return "";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "";
   const date = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return `${date}, ${time}`;
@@ -22,6 +30,9 @@ const extractArray = (res) => {
   if (Array.isArray(d)) return d;
   if (Array.isArray(d?.data)) return d.data;
   if (Array.isArray(d?.data?.data)) return d.data.data;
+  // Some paginated APIs embed records at data.data but also include meta in data
+  const maybe = d?.data?.data;
+  if (Array.isArray(maybe)) return maybe;
   return [];
 };
 
@@ -59,28 +70,26 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// UI <-> API mapping
-const uiToApiStatus = (ui = "pending") =>
-  String(ui).toLowerCase() === "resolved" ? "CLOSED" : "PENDING";
+// UI <-> API mapping for list tabs (uses `status`)
+const uiToApiListStatus = (ui = "pending") =>
+  String(ui).toLowerCase() === "resolved" ? "RESOLVED" : "PENDING";
 
-const apiToUiStatus = (status, resolve_status) => {
+// What to show in UI from raw (prefer `status`)
+const apiToUiStatus = (status) => {
   const s = String(status || "").toUpperCase();
-  const rs = String(resolve_status || "").toUpperCase();
-  return s === "CLOSED" || rs === "CLOSED" ? "resolved" : "pending";
+  return s === "RESOLVED" ? "resolved" : "pending";
 };
 
 const fullName = (obj) =>
   [obj?.first_name, obj?.last_name].filter(Boolean).join(" ").trim() || obj?.name || "";
 
-/** Decorate a dispute object (loose: don't fill placeholders where info is absent) */
+/** Decorate a dispute object (loose: leave blanks, no placeholders) */
 const decorateDispute = (raw = {}, loose = false) => {
   const bookings = raw.bookings || raw.booking || {};
   const service = bookings.service || raw.service || {};
   const creator = service.creator || raw.creator || raw.provider || {};
   const client = bookings.user || raw.client || raw.user || {};
   const initiator = raw.user || raw.initiator || {};
-
-  const or = (val, fallback) => (loose ? (val ?? undefined) : (val ?? fallback));
 
   const serviceCandidate =
     service.service_name || service.name || service.title || raw.service_name || raw.title || raw.asset?.title;
@@ -100,12 +109,12 @@ const decorateDispute = (raw = {}, loose = false) => {
 
   return {
     id: raw.id != null ? Number(raw.id) : undefined,
-    status: apiToUiStatus(raw.status, raw.resolve_status),
-    serviceName: or(serviceCandidate, "—"),
-    providerName: or(providerCandidate, "—"),
-    clientName: or(clientCandidate, "—"),
-    initiatedBy: or(initiatorCandidate, "—"),
-    createdAtReadable: or(formatReadableDateTime(raw.created_at || raw.createdAt), "—"),
+    status: apiToUiStatus(raw.status),
+    serviceName: serviceCandidate || (loose ? undefined : ""),
+    providerName: providerCandidate || (loose ? undefined : ""),
+    clientName: clientCandidate || (loose ? undefined : ""),
+    initiatedBy: initiatorCandidate || (loose ? undefined : ""),
+    createdAtReadable: formatReadableDateTime(raw.created_at || raw.createdAt) || (loose ? undefined : ""),
     _raw: raw,
   };
 };
@@ -116,13 +125,13 @@ const useDisputesStore = create((set, get) => ({
   loading: false,
   error: null,
 
-  currentStatus: "pending",
+  currentStatus: "pending", // 'pending' | 'resolved'
 
-  // GET {BASE_URL}/admin/dispute?status=PENDING|CLOSED&page=1
+  // GET {BASE_URL}/admin/dispute?status=PENDING|RESOLVED&page=1
   fetchDisputes: async ({ status = "pending", page = 1 } = {}) => {
     set({ loading: true, error: null });
     try {
-      const serverStatus = uiToApiStatus(status);
+      const serverStatus = uiToApiListStatus(status);
       const res = await api.get(`/admin/dispute`, { params: { status: serverStatus, page } });
       const rows = extractArray(res).map((r) => decorateDispute(r, false));
       const meta = extractMeta(res);
@@ -139,23 +148,27 @@ const useDisputesStore = create((set, get) => ({
     try {
       const res = await api.get(`/admin/dispute/show/${id}`);
       const raw = res?.data?.data || res?.data || {};
-      return decorateDispute(raw, true); // loose so we don't overwrite table values with "—"
+      return decorateDispute(raw, true); // loose: no placeholders
     } catch (err) {
       console.error("getDispute:", err);
       throw new Error(getErrorMessage(err, "Failed to load dispute details."));
     }
   },
 
-  // POST {BASE_URL}/admin/dispute/update/{id}  body: { resolve_status: "CLOSED" | "PENDING" }
+  // POST {BASE_URL}/admin/dispute/update/{id}  body: { resolve_status: "CLOSED" | "OPEN" }
   updateDispute: async (id, payload = {}) => {
     set({ loading: true, error: null });
     try {
+      // We only send resolve_status here
+      // If payload.status is "resolved" => resolve_status = CLOSED
+      // If payload.status is "pending"  => resolve_status = OPEN
       let body = {};
       if (payload && typeof payload === "object" && payload.status) {
-        body.resolve_status = String(payload.status).toLowerCase() === "resolved" ? "CLOSED" : "PENDING";
+        body.resolve_status =
+          String(payload.status).toLowerCase() === "resolved" ? "CLOSED" : "OPEN";
       }
       if (payload && typeof payload === "object" && payload.resolve_status) {
-        body.resolve_status = payload.resolve_status;
+        body.resolve_status = payload.resolve_status; // explicit override
       }
 
       await api.post(`/admin/dispute/update/${id}`, body);

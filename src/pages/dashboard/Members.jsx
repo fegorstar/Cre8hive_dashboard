@@ -1,9 +1,11 @@
 // src/pages/dashboard/Members.jsx
-// Matches Creators loader UX (no double-loading):
+// Summary cards are stable (use store.counts from an unfiltered fetch)
+// Table uses single-loader UX (like Creators):
 //  - Table always renders
 //  - If no rows: show a single "Loading…" row or "No members yet."
 //  - If rows exist and loading: show centered overlay spinner
-// Adds a "Status" column with pill + toggle.
+// Edit modal opens instantly and hydrates fields once data arrives.
+// Edit form matches POST /admin/user/:userId schema (no status field).
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -13,7 +15,6 @@ import Navbar from "../../components/layout/Navbar";
 import Footer from "../../components/layout/Footer";
 
 import useMembersStore from "../../store/MembersStore";
-import useCreatorsStore from "../../store/CreatorsStore";
 
 import { FiMoreVertical, FiSearch } from "react-icons/fi";
 
@@ -115,7 +116,7 @@ const ThreeDotsMenu = ({ items }) => {
   );
 };
 
-/* =========================== View / Edit =========================== */
+/* =========================== View =========================== */
 const MemberView = ({ record }) => {
   if (!record) return null;
   const creator = record.creator || {};
@@ -168,55 +169,38 @@ const MemberView = ({ record }) => {
           </div>
         </div>
       </div>
-
-      {record?.creator && (
-        <div className="space-y-2">
-          <div className="text-sm font-semibold">Creator profile</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[13px]">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">Gender</div>
-              <div className="text-gray-800 capitalize">{dash(creator.gender)}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">NIN</div>
-              <div className="text-gray-800">{dash(creator.nin)}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">ID Type</div>
-              <div className="text-gray-800">{dash(creator.id_type)}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">Job Title</div>
-              <div className="text-gray-800">{dash(creator.job_title)}</div>
-            </div>
-            <div className="md:col-span-2">
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">Active</div>
-              <div className="text-gray-800">
-                <StatusPill value={toNormStatus(creator?.active)} />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
-const MemberForm = ({ record, onSubmit, submitting }) => {
-  const [name, setName] = useState(record?.name ?? `${record?.first_name ?? ""} ${record?.last_name ?? ""}`.trim());
-  const [email, setEmail] = useState(record?.email ?? "");
-  const [phone, setPhone] = useState(record?.phone ?? record?.phone_number ?? "");
-  const [dob, setDob] = useState(record?.dob ?? "");
-  const [status, setStatus] = useState(
-    toNormStatus(record?.status ?? (record?.active ?? record?.creator?.active ?? "inactive"))
-  );
+/* =========================== Edit form (matches POST schema) =========================== */
+const MemberForm = ({ record = {}, onSubmit, submitting }) => {
+  const [first_name, setFirstName] = useState(record.first_name ?? "");
+  const [last_name, setLastName] = useState(record.last_name ?? "");
+  const [surname, setSurname] = useState(record.surname ?? "");
+  const [middle_name, setMiddleName] = useState(record.middle_name ?? "");
+  const [email, setEmail] = useState(record.email ?? "");
+  const [phone_number, setPhoneNumber] = useState(record.phone_number ?? "");
+  const [phone_number1, setPhoneNumber1] = useState(record.phone_number1 ?? "");
+  const [phone_number2, setPhoneNumber2] = useState(record.phone_number2 ?? "");
+  const [dob, setDob] = useState(record.dob ?? "");
+  const [gender, setGender] = useState(record.gender ?? "");
+  const [role, setRole] = useState(record.role ?? "USER");
+  const [marital_status, setMaritalStatus] = useState(record.marital_status ?? "");
 
   useEffect(() => {
-    setName(record?.name ?? `${record?.first_name ?? ""} ${record?.last_name ?? ""}`.trim());
-    setEmail(record?.email ?? "");
-    setPhone(record?.phone ?? record?.phone_number ?? "");
-    setDob(record?.dob ?? "");
-    setStatus(toNormStatus(record?.status ?? (record?.active ?? record?.creator?.active ?? "inactive")));
+    setFirstName(record.first_name ?? "");
+    setLastName(record.last_name ?? "");
+    setSurname(record.surname ?? "");
+    setMiddleName(record.middle_name ?? "");
+    setEmail(record.email ?? "");
+    setPhoneNumber(record.phone_number ?? "");
+    setPhoneNumber1(record.phone_number1 ?? "");
+    setPhoneNumber2(record.phone_number2 ?? "");
+    setDob(record.dob ?? "");
+    setGender(record.gender ?? "");
+    setRole(record.role ?? "USER");
+    setMaritalStatus(record.marital_status ?? "");
   }, [record]);
 
   return (
@@ -224,34 +208,94 @@ const MemberForm = ({ record, onSubmit, submitting }) => {
       className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ name, email, phone, dob, status });
+        onSubmit({
+          first_name,
+          last_name,
+          surname,
+          middle_name,
+          email,
+          phone_number,
+          phone_number1,
+          phone_number2,
+          dob,
+          gender,
+          role,
+          marital_status,
+        });
       }}
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium mb-1">Name</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputBase} placeholder="Full name" required />
+          <label className="block text-sm font-medium mb-1">First name</label>
+          <input className={inputBase} value={first_name} onChange={(e) => setFirstName(e.target.value)} required />
         </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Last name</label>
+          <input className={inputBase} value={last_name} onChange={(e) => setLastName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Surname</label>
+          <input className={inputBase} value={surname} onChange={(e) => setSurname(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Middle name</label>
+          <input className={inputBase} value={middle_name} onChange={(e) => setMiddleName(e.target.value)} />
+        </div>
+
         <div>
           <label className="block text-sm font-medium mb-1">Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputBase} placeholder="name@example.com" required />
+          <input type="email" className={inputBase} value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Primary phone</label>
+          <input className={inputBase} value={phone_number} onChange={(e) => setPhoneNumber(e.target.value)} />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Phone</label>
-          <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputBase} placeholder="+2348012345678" required />
+          <label className="block text-sm font-medium mb-1">Alt phone 1</label>
+          <input className={inputBase} value={phone_number1} onChange={(e) => setPhoneNumber1(e.target.value)} />
         </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Alt phone 2</label>
+          <input className={inputBase} value={phone_number2} onChange={(e) => setPhoneNumber2(e.target.value)} />
+        </div>
+
         <div>
           <label className="block text-sm font-medium mb-1">DOB</label>
-          <input type="date" value={dob || ""} onChange={(e) => setDob(e.target.value)} className={inputBase} placeholder="YYYY-MM-DD" />
+          <input type="date" className={inputBase} value={dob || ""} onChange={(e) => setDob(e.target.value)} />
         </div>
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium mb-1">Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectBase}>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Gender</label>
+          <select className={selectBase} value={gender} onChange={(e) => setGender(e.target.value)}>
+            <option value="">Select…</option>
+            <option value="male">male</option>
+            <option value="female">female</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Role</label>
+          <select className={selectBase} value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="USER">USER</option>
+            <option value="CREATOR">CREATOR</option>
+            <option value="ADMIN">ADMIN</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Marital status</label>
+          <select className={selectBase} value={marital_status} onChange={(e) => setMaritalStatus(e.target.value)}>
+            <option value="">Select…</option>
+            <option value="single">single</option>
+            <option value="married">married</option>
+            <option value="divorced">divorced</option>
+            <option value="widowed">widowed</option>
           </select>
         </div>
       </div>
+
       <button type="submit" id="__member_submit_btn__" className="hidden" disabled={submitting} />
     </form>
   );
@@ -373,9 +417,16 @@ const Members = () => {
 
   const toast = useToastAlert();
 
-  const { members, pagination, fetchMembers, getMember, updateMember, toggleMemberStatus, loading } =
-    useMembersStore();
-  const creatorsStore = useCreatorsStore(); // for summary "Creators" card
+  const {
+    members,
+    pagination,
+    counts,          // global, only refreshed on unfiltered fetch
+    fetchMembers,
+    getMember,
+    updateMember,
+    toggleMemberStatus,
+    loading,
+  } = useMembersStore();
 
   // Filters & paging (server-driven)
   const [q, setQ] = useState("");
@@ -391,13 +442,13 @@ const Members = () => {
   const [modalMode, setModalMode] = useState("view"); // 'view' | 'edit'
   const [modalRecord, setModalRecord] = useState(null);
 
-  // Initial fetch (table renders immediately)
+  // Initial unfiltered fetch to seed table + GLOBAL counts
   useEffect(() => {
-    fetchMembers?.({ page: 1, per_page: perPage, q: "", role: "" });
+    fetchMembers?.({ page: 1, per_page: perPage, q: "", role: "" }); // this one updates counts
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debounced fetch on q/role/page
+  // Debounced fetch on q/role/page (does NOT update counts in store)
   useEffect(() => {
     const t = setTimeout(() => {
       fetchMembers?.({ page, per_page: perPage, q, role });
@@ -419,33 +470,43 @@ const Members = () => {
 
   const allRows = useMemo(() => (Array.isArray(members) ? members : []), [members]);
 
-  // Summary metrics
-  const totalUsers = pagination?.total ?? allRows.length ?? 0;
-  const creatorsCount =
-    (allRows.filter((r) => String(r.role).toUpperCase() === "CREATOR").length) ||
-    creatorsStore?.pagination?.total ||
-    0;
+  // STABLE summary metrics from counts (fall back gently if missing)
+  const totalUsers =
+    counts?.total_users ?? counts?.total ?? counts?.users ?? pagination?.total ?? 0;
+  const totalCreators =
+    counts?.total_creators ?? counts?.creators ?? counts?.by_role?.CREATOR ?? 0;
+  const verifiedEmails =
+    counts?.verified_emails ?? counts?.verified ?? 0;
+  const activeUsers =
+    counts?.active_users ?? counts?.active ?? 0;
+
+  // Modal open instantly; then hydrate with GET /admin/user/:id and merge
+  const merge = (a, b) => ({ ...(a || {}), ...(b || {}) });
 
   const openView = async (record) => {
+    setModalMode("view");
+    setModalRecord(record);
+    setModalOpen(true);
     try {
       const full = await getMember?.(record.id);
-      setModalMode("view");
-      setModalRecord(full || record);
-      setModalOpen(true);
+      setModalRecord((prev) => merge(prev, full));
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load member." });
     }
   };
+
   const openEdit = async (record) => {
+    setModalMode("edit");
+    setModalRecord(record);
+    setModalOpen(true);
     try {
       const full = await getMember?.(record.id);
-      setModalMode("edit");
-      setModalRecord(full || record);
-      setModalOpen(true);
+      setModalRecord((prev) => merge(prev, full));
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load member." });
     }
   };
+
   const closeModal = () => setModalOpen(false);
 
   const handleToggle = async (row) => {
@@ -457,6 +518,7 @@ const Members = () => {
       await fetchMembers?.({ page, per_page: perPage, q, role });
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Status change failed." });
+      // eslint-disable-next-line no-console
       console.error(e);
     } finally {
       setTogglingId(null);
@@ -467,12 +529,13 @@ const Members = () => {
     try {
       if (!modalRecord?.id) return;
       setSubmitting(true);
-      await updateMember?.(modalRecord.id, payload);
+      await updateMember?.(modalRecord.id, payload); // POST /admin/user/:id
       toast.add({ type: "success", title: "Updated", message: "Member updated successfully." });
       await fetchMembers?.({ page, per_page: perPage, q, role });
       closeModal();
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Update failed." });
+      // eslint-disable-next-line no-console
       console.error(e);
     } finally {
       setSubmitting(false);
@@ -489,8 +552,6 @@ const Members = () => {
   const filteredRows = allRows;
   const pageRows =
     pagination?.total ? filteredRows : filteredRows.slice((page - 1) * per, page * per);
-
-  const hasRows = pageRows.length > 0;
 
   return (
     <main>
@@ -510,31 +571,23 @@ const Members = () => {
               <p className="inline-block px-6 text-base md:text-lg leading-5 font-semibold">Users</p>
             </div>
 
-            {/* Summary cards */}
+            {/* Summary cards (stable via counts) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-2">Total Users</div>
                 <div className="text-2xl font-semibold">{Number(totalUsers || 0).toLocaleString()}</div>
               </div>
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Creators (visible page)</div>
-                <div className="text-2xl font-semibold">{Number(creatorsCount || 0).toLocaleString()}</div>
+                <div className="text-xs text-gray-600 mb-2">Total Creators</div>
+                <div className="text-2xl font-semibold">{Number(totalCreators || 0).toLocaleString()}</div>
               </div>
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Verified Emails (visible page)</div>
-                <div className="text-2xl font-semibold">
-                  {allRows.filter((r) => !!r.email_verified_at).length.toLocaleString()}
-                </div>
+                <div className="text-xs text-gray-600 mb-2">Verified Emails</div>
+                <div className="text-2xl font-semibold">{Number(verifiedEmails || 0).toLocaleString()}</div>
               </div>
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Active (derived)</div>
-                <div className="text-2xl font-semibold">
-                  {allRows
-                    .filter((r) =>
-                      toNormStatus(r?.status ?? r?.active ?? r?.creator?.active ?? "") === "active"
-                    )
-                    .length.toLocaleString()}
-                </div>
+                <div className="text-xs text-gray-600 mb-2">Active Users</div>
+                <div className="text-2xl font-semibold">{Number(activeUsers || 0).toLocaleString()}</div>
               </div>
             </div>
 

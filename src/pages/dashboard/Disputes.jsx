@@ -26,7 +26,7 @@ const StatusPill = ({ value }) => {
     v === "resolved"
       ? "bg-green-50 text-green-700 border-green-200"
       : "bg-yellow-50 text-yellow-700 border-yellow-200";
-  const label = v ? v[0].toUpperCase() + v.slice(1) : "—";
+  const label = v ? v[0].toUpperCase() + v.slice(1) : "";
   return (
     <span className={`inline-flex px-2 py-0.5 text-[11px] rounded-full border font-medium ${cls}`}>
       {label}
@@ -108,12 +108,13 @@ const ThreeDotsMenu = ({ items = [] }) => {
 };
 
 /* ---------- details list (view modal) ---------- */
+/** No placeholder: if value is empty/undefined, render blank. */
 const DetailsList = ({ items }) => (
   <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
     {items.map((item) => (
       <div key={item.label} className="space-y-1">
         <dt className="text-xs uppercase tracking-wide text-gray-500">{item.label}</dt>
-        <dd className="text-sm font-medium text-gray-900">{item.value ?? "—"}</dd>
+        <dd className="text-sm font-medium text-gray-900">{item.value || ""}</dd>
       </div>
     ))}
   </dl>
@@ -180,7 +181,8 @@ const Disputes = () => {
     return () => {
       cancelled = true;
     };
-  }, [tab, page, fetchDisputes]); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page]);
 
   // filter (client-side)
   const filteredRows = useMemo(() => {
@@ -229,26 +231,28 @@ const Disputes = () => {
     </div>
   );
 
-  // normalize: if backend status is missing/wrong, fall back to the active tab
+  // normalize: keep table consistent with tab
   const normStatus = (v, fallback) => {
     const s = String(v || "").toLowerCase();
     if (s === "pending" || s === "resolved") return s;
-    return fallback; // ensure Pending tab shows Pending, etc.
+    return fallback;
   };
 
-  // safe merge: only take non-empty, non-"—" values from `next`
+  // safe merge: only take defined, non-empty values from `next`
   const safeMerge = (prev, next) => {
     const out = { ...(prev || {}) };
     Object.entries(next || {}).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== "" && v !== "—") out[k] = v;
+      if (v !== undefined && v !== null && v !== "") out[k] = v;
     });
     return out;
   };
 
   // actions
   const openView = async (row) => {
-    setViewRecord(row); // prefill from table row
+    // Pre-fill from table row (already normalized)
+    setViewRecord(row);
     setViewOpen(true);
+
     try {
       const full = await getDispute(row.id);
       setViewRecord((prev) => safeMerge(prev, full));
@@ -271,7 +275,10 @@ const Disputes = () => {
     if (!confirmPayload) return;
     setConfirmBusy(true);
     try {
-      const payload = confirmPayload.action === "resolve" ? { status: "resolved" } : { status: "pending" };
+      // UI -> update body uses resolve_status only
+      const payload =
+        confirmPayload.action === "resolve" ? { resolve_status: "CLOSED" } : { resolve_status: "OPEN" };
+
       await updateDispute(confirmPayload.id, payload);
 
       toast.add({
@@ -281,8 +288,7 @@ const Disputes = () => {
       });
       setConfirmOpen(false);
       setConfirmPayload(null);
-      // optional: refresh list
-      await fetchDisputes({ status: tab, page: currentPage });
+      // optional: refresh list (store already refreshes after update)
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Update failed." });
     } finally {
@@ -368,11 +374,11 @@ const Disputes = () => {
                     ) : (
                       filteredRows.map((row) => (
                         <tr key={row.id} className="border-t border-gray-100">
-                          <td className="px-4 py-3">{row.serviceName}</td>
-                          <td className="px-4 py-3">{row.providerName}</td>
-                          <td className="px-4 py-3">{row.clientName}</td>
-                          <td className="px-4 py-3">{row.initiatedBy}</td>
-                          <td className="px-4 py-3">{row.createdAtReadable}</td>
+                          <td className="px-4 py-3">{row.serviceName || ""}</td>
+                          <td className="px-4 py-3">{row.providerName || ""}</td>
+                          <td className="px-4 py-3">{row.clientName || ""}</td>
+                          <td className="px-4 py-3">{row.initiatedBy || ""}</td>
+                          <td className="px-4 py-3">{row.createdAtReadable || ""}</td>
                           <td className="px-4 py-3">
                             <StatusPill value={normStatus(row.status, tab)} />
                           </td>
