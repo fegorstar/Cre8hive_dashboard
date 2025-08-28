@@ -1,8 +1,11 @@
 // src/store/CreatorsStore.js
-// - Auth like "create category": Accept + Bearer from localStorage
-// - Status normalization so UI + filter stay accurate (handles 1/0/true/false/strings)
-// - Fetch, Create (member->admin fallback), Update, Toggle (PUT /admin/creator/:id with {status})
-// - LocalStorage caching for list + pagination
+// Endpoints:
+//   LIST:   GET {BASE_URL}/admin/user/creators?page=1
+//           GET {BASE_URL}/admin/user/creators?search=JohnDoe&active=true
+//   SINGLE: GET {BASE_URL}/admin/user/creators/:id
+// Notes:
+//   - Create/Update/Toggle still on /admin/creator/* (as before).
+//   - Tolerant extraction + decoration for "creator-with-nested-user" AND "user-with-nested-creator".
 
 import { create } from 'zustand';
 import axios from 'axios';
@@ -10,7 +13,6 @@ import { BASE_URL } from '../config';
 
 const api = axios.create({ baseURL: BASE_URL });
 
-// Attach default headers + token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken');
   config.headers = config.headers || {};
@@ -22,10 +24,11 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Normalize any status into 'active' | 'inactive'
+// Normalize to 'active' | 'inactive'
 const toNormStatus = (raw) => {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === '1' || v === 'true' || v === 'active') return 'active';
+  if (raw === true) return 'active';
   return 'inactive';
 };
 
@@ -52,10 +55,17 @@ const extractArray = (res) => {
 };
 
 const extractObject = (res) => {
-  if (!res) return null;
-  if (res?.data?.data && typeof res.data.data === 'object') return res.data.data;
-  if (res?.data && typeof res.data === 'object') return res.data;
-  return null;
+  // Prefer { data: {...} }
+  if (res?.data?.data && !Array.isArray(res.data.data) && typeof res.data.data === 'object') {
+    return res.data.data;
+  }
+  // Fallback to { ... } at root .data
+  if (res?.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+    return res.data;
+  }
+  // Last chance: first element of any array envelope
+  const arr = extractArray(res);
+  return arr.length ? arr[0] : null;
 };
 
 const normalizeIds = (it = {}) => ({
@@ -63,43 +73,73 @@ const normalizeIds = (it = {}) => ({
   id: it?.id !== undefined ? Number(it.id) : it?.id,
 });
 
-// Decorate a raw creator object for consistent table display
+/**
+ * Decorate a record that may be:
+ *  - "creator" with nested "user" (your payload)
+ *  - "user" with nested "creator" (other backends)
+ *  - flat user/creator
+ */
 const decorateCreator = (raw = {}) => {
   const norm = normalizeIds(raw);
 
+  // Try to detect both directions
+  const user = norm.user && typeof norm.user === 'object' ? normalizeIds(norm.user) : {};
+  const creator = norm.creator && typeof norm.creator === 'object' ? normalizeIds(norm.creator) : norm; // top-level is creator in your payload
+
+  // Name
   const fullName =
     norm.name ||
-    norm.fullName ||
-    `${norm?.member?.first_name ?? ''} ${norm?.member?.last_name ?? ''}`.trim() ||
     `${norm.first_name ?? ''} ${norm.last_name ?? ''}`.trim() ||
+    `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() ||
+    user.surname ||
     undefined;
 
-  const gender =
-    (norm.gender ?? norm?.member?.gender ?? norm?.profile?.gender ?? '')
-      ?.toString()
-      ?.toLowerCase() || undefined;
+  // Contact
+  const email = norm.email || user.email || creator.email;
+  const phone =
+    norm.phone_number ||
+    user.phone_number ||
+    norm.phone ||
+    norm.msisdn ||
+    norm.mobile ||
+    creator.phone ||
+    undefined;
 
-  const nin = norm.nin ?? norm?.member?.nin ?? norm?.profile?.nin ?? undefined;
+  // Attributes
+  const gender = (norm.gender ?? user.gender ?? creator.gender ?? '')
+    ?.toString()
+    ?.toLowerCase() || undefined;
+  const nin = norm.nin ?? user.nin ?? creator.nin ?? undefined;
+  const bvn = norm.bvn ?? user.bvn ?? creator.bvn ?? undefined;
+
+  // Status: prefer boolean "active" (top-level or in nested), fallback to string status
+  const activeFlag =
+    norm.active ?? creator.active ?? user.active ?? (toNormStatus(norm.status) === 'active');
 
   return {
-    ...norm,
-    name: fullName || norm.name,
-    email: norm?.member?.email || norm.email,
-    phone: norm?.member?.phone_number || norm.phone || norm.msisdn || norm.mobile,
+    ...norm, // keep original fields (services, bookings, etc.)
+    user,    // keep nested user handy
+    name: fullName,
+    email,
+    phone,
     gender,
     nin,
-    status: toNormStatus(norm.status),
-    createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
-    updatedAtReadable: formatReadableDate(norm.updated_at || norm.updatedAt),
+    bvn,
+    // unified status for UI
+    status: toNormStatus(activeFlag ? 'active' : 'inactive'),
+    createdAtReadable: formatReadableDate(
+      norm.created_at || creator.created_at || user.created_at || norm.createdAt
+    ),
+    updatedAtReadable: formatReadableDate(
+      norm.updated_at || creator.updated_at || user.updated_at || norm.updatedAt
+    ),
   };
 };
 
 // Restore cache
 const defaultCached = JSON.parse(localStorage.getItem('creators') || '[]');
 const defaultPagination = JSON.parse(
-  localStorage.getItem('creitors_pagination') ||
-    localStorage.getItem('creators_pagination') ||
-    '{"page":1,"per_page":10,"total":0}'
+  localStorage.getItem('creators_pagination') || '{"page":1,"per_page":10,"total":0}'
 );
 
 const useCreatorsStore = create((set, get) => ({
@@ -108,23 +148,36 @@ const useCreatorsStore = create((set, get) => ({
   loading: false,
   error: null,
 
+  // currently viewed single creator (for the View modal / detail page)
+  currentCreator: null,
+
   /**
-   * GET /admin/creator/list?perpage=…&page=…&status=…&search=…
+   * LIST (server)
+   * GET /admin/user/creators?page=…&search=…&active=true|false
+   * UI passes: { page, per_page, q, status }
+   *   - q -> search
+   *   - status 'active'|'inactive' -> active true|false
    */
   fetchCreators: async (params = {}) => {
     set({ loading: true, error: null });
     try {
       const { page = 1, per_page = 10, q = '', status = '' } = params;
 
-      const res = await api.get('/admin/creator/list', {
+      // Map UI 'status' to API 'active' boolean
+      let active;
+      if (status === 'active') active = true;
+      else if (status === 'inactive') active = false;
+
+      const res = await api.get('/admin/user/creators', {
         params: {
           page,
-          perpage: per_page,
-          status: status ? toNormStatus(status) : undefined,
+          per_page,          // included if supported
           search: q || undefined,
+          active,
         },
       });
 
+      // Expecting { data: { current_page, data:[...], total, per_page } }
       const root = res?.data?.data || {};
       const list = Array.isArray(root?.data) ? root.data : extractArray(res);
       const decorated = list.map(decorateCreator);
@@ -148,7 +201,43 @@ const useCreatorsStore = create((set, get) => ({
   },
 
   /**
-   * Create (member first; fallback to admin).
+   * SINGLE (server)
+   * GET /admin/user/creators/:id
+   * Returns decorated record; also stores it in currentCreator and refreshes the list cache item (if present).
+   */
+  fetchCreator: async (id) => {
+    if (!id && id !== 0) throw new Error('Missing id');
+    set({ loading: true, error: null });
+    try {
+      const res = await api.get(`/admin/user/creators/${id}`);
+      const raw = extractObject(res);
+      if (!raw) throw new Error('Creator not found');
+      const decorated = decorateCreator(raw);
+
+      // Update list cache if present
+      set((state) => {
+        const list = Array.isArray(state.creators) ? state.creators.slice() : [];
+        const idx = list.findIndex((c) => Number(c.id) === Number(id));
+        if (idx >= 0) list[idx] = { ...list[idx], ...decorated };
+        localStorage.setItem('creators', JSON.stringify(list));
+        return { creators: list, currentCreator: decorated, loading: false };
+      });
+
+      return decorated;
+    } catch (error) {
+      console.error('Error fetching creator:', error);
+      set({
+        error: error?.response?.data?.message || error.message,
+        loading: false,
+      });
+      throw new Error(error?.response?.data?.message || error.message);
+    }
+  },
+
+  clearCurrentCreator: () => set({ currentCreator: null }),
+
+  /**
+   * Create (member; fallback admin)
    * POST /member/creator/create  (401 => fallback)  -> POST /admin/creator/create
    */
   createCreator: async (payload) => {
@@ -201,15 +290,19 @@ const useCreatorsStore = create((set, get) => ({
     try {
       const res = await api.put(`/admin/creator/${id}`, updatedData);
       const updatedRaw = extractObject(res) || res?.data;
+      const decorated = decorateCreator(updatedRaw);
 
       set((state) => {
         const creators = (state.creators || []).map((c) =>
-          Number(c.id) === Number(id)
-            ? { ...c, ...decorateCreator({ ...c, ...updatedRaw }) }
-            : c
+          Number(c.id) === Number(id) ? { ...c, ...decorated } : c
         );
         localStorage.setItem('creators', JSON.stringify(creators));
-        return { creators, loading: false };
+        // keep currentCreator fresh if we are viewing it
+        const currentCreator =
+          Number(state.currentCreator?.id) === Number(id)
+            ? { ...state.currentCreator, ...decorated }
+            : state.currentCreator;
+        return { creators, currentCreator, loading: false };
       });
 
       return { message: 'Creator updated successfully!' };
@@ -229,18 +322,26 @@ const useCreatorsStore = create((set, get) => ({
   toggleCreatorStatus: async (id) => {
     set({ loading: true, error: null });
     try {
-      const current = get().creators.find((c) => Number(c.id) === Number(id));
+      const current = get().creators.find((c) => Number(c.id) === Number(id)) || get().currentCreator;
       const currentStatus = toNormStatus(current?.status);
       const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
 
       await api.put(`/admin/creator/${id}`, { status: nextStatus });
 
       set((state) => {
+        // update list
         const creators = (state.creators || []).map((c) =>
           Number(c.id) === Number(id) ? { ...c, status: nextStatus } : c
         );
         localStorage.setItem('creators', JSON.stringify(creators));
-        return { creators, loading: false };
+
+        // update current
+        const currentCreator =
+          Number(state.currentCreator?.id) === Number(id)
+            ? { ...state.currentCreator, status: nextStatus }
+            : state.currentCreator;
+
+        return { creators, currentCreator, loading: false };
       });
     } catch (error) {
       console.error('Error toggling creator status:', error);

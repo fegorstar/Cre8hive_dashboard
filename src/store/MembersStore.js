@@ -1,14 +1,19 @@
 // src/store/MembersStore.js
-// - Auth headers (Accept + Bearer from localStorage)
-// - Status normalization (1/0/true/false/strings)
-// - Fetch list, Get single, Update, Toggle (PUT /admin/member/:id {status})
-// - Local cache for quick hydration
+// Endpoints:
+//  - LIST/SEARCH: GET {BASE_URL}/admin/user?role=CREATOR&search=John&page=1&per_page=10
+//  - SHOW:        GET {BASE_URL}/admin/user/{id}
+//  - UPDATE:      PUT {BASE_URL}/admin/user/{id}       (payload: arbitrary fields e.g. { status: "active"|"inactive" })
+// Notes:
+//  - Auth headers (Accept + Bearer)
+//  - Status normalization (1/0/true/false/strings) with tolerant derivation (status → active → creator.active)
+//  - Local cache for quick hydration
+//  - Stores `counts` from API for summary cards
 
 import { create } from 'zustand';
 import axios from 'axios';
 import { BASE_URL } from '../config';
 
-const api = axios.create({ baseURL: BASE_URL });
+const api = axios.create({ baseURL: String(BASE_URL || '').replace(/\/$/, '') });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken');
@@ -38,20 +43,17 @@ const formatReadableDate = (iso) => {
 };
 
 const extractArray = (res) => {
-  if (!res) return [];
-  if (Array.isArray(res)) return res;
-  if (Array.isArray(res?.data)) return res.data;
+  // paginator lives under res.data.data (object), with list at .data
+  const root = res?.data?.data;
+  if (root && Array.isArray(root.data)) return root.data;
+  // fallbacks
   if (Array.isArray(res?.data?.data)) return res.data.data;
-  if (Array.isArray(res?.data?.result)) return res.data.result;
-  if (Array.isArray(res?.data?.data?.data)) return res.data.data.data;
-  // Some APIs (like the sample blob) might return a single object under data
-  const single = res?.data?.data;
-  if (single && typeof single === 'object' && !Array.isArray(single)) return [single];
+  if (Array.isArray(res?.data)) return res.data;
+  if (Array.isArray(res)) return res;
   return [];
 };
 
 const extractObject = (res) => {
-  if (!res) return null;
   if (res?.data?.data && typeof res.data.data === 'object') return res.data.data;
   if (res?.data && typeof res.data === 'object') return res.data;
   return null;
@@ -62,12 +64,27 @@ const normalizeIds = (it = {}) => ({
   id: it?.id !== undefined ? Number(it.id) : it?.id,
 });
 
+const has = (v) => v !== undefined && v !== null && v !== '';
+
 const decorateMember = (raw = {}) => {
   const norm = normalizeIds(raw);
-
   const first = norm.first_name ?? norm.firstName ?? '';
   const last = norm.last_name ?? norm.lastName ?? '';
   const name = (norm.name || `${first} ${last}`.trim()) || undefined;
+
+  // Derive status in priority:
+  // 1) explicit `status`
+  // 2) top-level `active`
+  // 3) nested `creator.active`
+  // leave undefined if none present (UI will derive further if needed)
+  let status;
+  if (has(norm.status)) {
+    status = toNormStatus(norm.status);
+  } else if (has(norm.active)) {
+    status = toNormStatus(norm.active);
+  } else if (has(norm?.creator?.active)) {
+    status = toNormStatus(norm.creator.active);
+  }
 
   return {
     ...norm,
@@ -75,7 +92,10 @@ const decorateMember = (raw = {}) => {
     email: norm.email,
     phone: norm.phone_number || norm.phone || norm.msisdn || norm.mobile,
     member_id: norm.member_id,
-    status: toNormStatus(norm.status),
+    status, // 'active' | 'inactive' | undefined
+    role: norm.role, // e.g. CREATOR, ADMIN
+    kyc_status: norm.kyc_status, // passthrough if present
+    dob: norm.dob,
     dobReadable: formatReadableDate(norm.dob),
     createdAtReadable: formatReadableDate(norm.created_at || norm.createdAt),
     updatedAtReadable: formatReadableDate(norm.updated_at || norm.updatedAt),
@@ -87,43 +107,44 @@ const defaultCached = JSON.parse(localStorage.getItem('members') || '[]');
 const defaultPagination = JSON.parse(
   localStorage.getItem('members_pagination') || '{"page":1,"per_page":10,"total":0}'
 );
+const defaultCounts = JSON.parse(localStorage.getItem('members_counts') || '{}');
 
 const useMembersStore = create((set, get) => ({
   members: defaultCached,
   pagination: defaultPagination,
+  counts: defaultCounts,
   loading: false,
   error: null,
 
-  // GET /admin/member/list?perpage=…&page=…&status=…&search=…
+  // GET /admin/user?role=&search=&page=&per_page=
   fetchMembers: async (params = {}) => {
     set({ loading: true, error: null });
     try {
-      const { page = 1, per_page = 10, q = '', status = '' } = params;
+      const { page = 1, per_page = 10, q = '', role = '' } = params;
 
-      const res = await api.get('/admin/member/list', {
+      const res = await api.get('/admin/user', {
         params: {
           page,
-          perpage: per_page, // API expects 'perpage'
-          status: status ? toNormStatus(status) : undefined,
-          search: q || undefined,
+          per_page,              // your API shows `per_page` in the response; send the same
+          role: role || undefined,
+          search: q || undefined // search param is `search`
         },
       });
 
-      // Try standard paginated shape first, then fallback to array extraction
+      const list = extractArray(res).map(decorateMember);
       const root = res?.data?.data || {};
-      const list = Array.isArray(root?.data) ? root.data : extractArray(res);
-
-      const decorated = list.map(decorateMember);
+      const counts = res?.data?.counts || {};
 
       const nextPagination = {
         page: Number(root?.current_page ?? page),
         per_page: Number(root?.per_page ?? per_page),
-        total: Number(root?.total ?? decorated.length),
+        total: Number(root?.total ?? list.length),
       };
 
-      set({ members: decorated, pagination: nextPagination, loading: false });
-      localStorage.setItem('members', JSON.stringify(decorated));
+      set({ members: list, pagination: nextPagination, counts, loading: false });
+      localStorage.setItem('members', JSON.stringify(list));
       localStorage.setItem('members_pagination', JSON.stringify(nextPagination));
+      localStorage.setItem('members_counts', JSON.stringify(counts));
     } catch (error) {
       console.error('Error fetching members:', error);
       set({
@@ -133,11 +154,11 @@ const useMembersStore = create((set, get) => ({
     }
   },
 
-  // GET single: /admin/member/:id
+  // GET single: /admin/user/{id}
   getMember: async (id) => {
     set({ loading: true, error: null });
     try {
-      const res = await api.get(`/admin/member/${id}`);
+      const res = await api.get(`/admin/user/${id}`);
       const raw = extractObject(res) || res?.data;
       const member = decorateMember(raw);
       set({ loading: false });
@@ -152,11 +173,11 @@ const useMembersStore = create((set, get) => ({
     }
   },
 
-  // Update arbitrary fields (admin)
+  // Update arbitrary fields (admin): PUT /admin/user/{id}
   updateMember: async (id, updatedData) => {
     set({ loading: true, error: null });
     try {
-      const res = await api.put(`/admin/member/${id}`, updatedData);
+      const res = await api.put(`/admin/user/${id}`, updatedData);
       const updatedRaw = extractObject(res) || res?.data;
 
       set((state) => {
@@ -180,15 +201,23 @@ const useMembersStore = create((set, get) => ({
     }
   },
 
-  // Toggle / set status using PUT /admin/member/:id  { status: "active"|"inactive" }
+  // Toggle / set status using PUT /admin/user/{id} { status: "active"|"inactive" }
   toggleMemberStatus: async (id) => {
     set({ loading: true, error: null });
     try {
       const current = get().members.find((m) => Number(m.id) === Number(id));
-      const currentStatus = toNormStatus(current?.status);
+
+      // derive current status from any available source
+      const base =
+        (current?.status !== undefined ? current.status : undefined) ??
+        (current?.active !== undefined ? current.active : undefined) ??
+        (current?.creator?.active !== undefined ? current.creator.active : undefined) ??
+        false;
+
+      const currentStatus = toNormStatus(base);
       const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
 
-      await api.put(`/admin/member/${id}`, { status: nextStatus });
+      await api.put(`/admin/user/${id}`, { status: nextStatus });
 
       set((state) => {
         const members = (state.members || []).map((m) =>

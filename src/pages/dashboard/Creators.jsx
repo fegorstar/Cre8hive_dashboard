@@ -1,11 +1,6 @@
 // src/pages/dashboard/Creators.jsx
-// Updates:
-// - Removed "New Creator" button
-// - Search input now lives in the Tabs row on the RIGHT (replaces the button)
-// - Removed duplicate search from filters section; kept Status filter only
-// - Reuse shared components: Modal, ToastAlert/useToastAlert, useClickOutside, useAuthGuard, Spinner/CenterLoader
-// - Summary cards + 3 tabs (Assets creators, Service providers, Artists)
-// - View modal is read-only; Create/Edit modal uses same form
+// Wired to /admin/user/creators?search=…&active=true|false
+// Table always renders; loader shows inside (row when empty, overlay when refreshing)
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -15,63 +10,60 @@ import Navbar from "../../components/layout/Navbar";
 import Footer from "../../components/layout/Footer";
 
 import useCreatorsStore from "../../store/CreatorsStore";
-import { FiMoreVertical, FiX, FiSearch, FiExternalLink, FiCopy } from "react-icons/fi";
+import { FiMoreVertical, FiSearch, FiExternalLink, FiCopy, FiPhone, FiMail } from "react-icons/fi";
 
 import Modal from "../../components/common/Modal";
 import { ToastAlert, useToastAlert } from "../../components/common/ToastAlert";
 import useClickOutside from "../../lib/useClickOutside";
 import useAuthGuard from "../../lib/useAuthGuard";
-import { Spinner, CenterLoader } from "../../components/common/Spinner";
+import { Spinner } from "../../components/common/Spinner"; // ← CenterLoader removed
 
 const BRAND_RGB = "rgb(77, 52, 144)";
 
 /* ===========================
    Tiny helpers
    =========================== */
-const isUrl = (v) => {
-  if (!v || typeof v !== "string") return false;
-  try {
-    new URL(v, window.location.origin);
-    return true;
-  } catch {
-    return false;
-  }
+const toHttpUrl = (v) => {
+  const s = String(v || "").trim();
+  if (!s) return "";
+  return /^https?:\/\//i.test(s) ? s : `https://${s}`;
 };
 const isImageUrl = (v) => /\.(png|jpe?g|gif|webp|svg)$/i.test(String(v || ""));
-const toNormStatus = (raw) => {
-  const v = String(raw ?? "").trim().toLowerCase();
+const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+const fmtDate = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return "—";
+  return d.toLocaleString("en-NG", { year: "numeric", month: "short", day: "2-digit" });
+};
+const getName = (row = {}) =>
+  row.name ||
+  [row.user?.first_name, row.user?.last_name].filter(Boolean).join(" ") ||
+  row.user?.surname ||
+  "";
+
+const getStatus = (row = {}) => {
+  if (typeof row.active === "boolean") return row.active ? "active" : "inactive";
+  const v = String(row.status ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "active" ? "active" : "inactive";
 };
-const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
 
-/* ----- classify creator for counts & tabs (tolerant to different API shapes) ----- */
+/* ----- classify creator for counts & tabs (defensive) ----- */
 const classifyType = (row = {}) => {
-  const raw =
-    row.type ||
-    row.role ||
-    row.category ||
-    row.segment ||
-    row.creator_type ||
-    row.kind ||
-    row.group ||
-    "";
-  const v = String(raw).toLowerCase();
-
-  if (v.includes("service")) return "service_providers";
-  if (v.includes("artist")) return "artists";
-  if (v.includes("asset") || v.includes("assets")) return "assets_creators";
-
-  // Boolean-ish flags some APIs use
+  const job = String(row.job_title || "").toLowerCase();
+  if (Number(row.services_count) > 0 || (Array.isArray(row.services) && row.services.length > 0)) {
+    return "service_providers";
+  }
+  if (job.includes("artist") || job.includes("dj") || job.includes("singer")) return "artists";
+  if (job.includes("asset") || job.includes("assets")) return "assets_creators";
   if (row.is_artist) return "artists";
   if (row.is_service || row.service_provider) return "service_providers";
   if (row.is_asset || row.assets_creator) return "assets_creators";
-
-  // Default
-  return "assets_creators";
+  return "service_providers";
 };
 
 /* ===========================
-   3-dots menu (reusing useClickOutside)
+   3-dots menu
    =========================== */
 const ThreeDotsMenu = ({ items }) => {
   const [open, setOpen] = useState(false);
@@ -90,7 +82,7 @@ const ThreeDotsMenu = ({ items }) => {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-40 origin-top-right rounded-md border border-gray-200 bg-white shadow-lg z-20">
+        <div className="absolute right-0 mt-2 w-44 origin-top-right rounded-md border border-gray-200 bg-white shadow-lg z-20">
           {safeItems.map((item, idx) => (
             <button
               key={idx}
@@ -110,13 +102,8 @@ const ThreeDotsMenu = ({ items }) => {
 };
 
 /* ===========================
-   Read-only "View Details"
+   Read-only helpers
    =========================== */
-const inputBase =
-  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm placeholder:text-xs placeholder:font-light placeholder:text-gray-400";
-const selectBase =
-  "w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-[#4D3490] text-sm";
-
 const CopyBtn = ({ value, small }) => {
   const [done, setDone] = useState(false);
   return (
@@ -141,8 +128,9 @@ const CopyBtn = ({ value, small }) => {
 };
 
 const LinkField = ({ url }) => {
-  if (!isUrl(url)) return <span className="text-gray-700 text-[13px] break-all">—</span>;
-  const href = String(url);
+  const href = toHttpUrl(url);
+  if (!href) return <span className="text-gray-700 text-[13px] break-all">—</span>;
+
   const openBtn = (
     <a
       href={href}
@@ -212,168 +200,6 @@ const Toggle = ({ checked, onChange }) => (
   </button>
 );
 
-const CreatorDetailsView = ({ record }) => (
-  <div className="space-y-4">
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <div className="text-[13px] font-medium">{dash(record?.name)}</div>
-        <StatusPill value={toNormStatus(record?.status)} />
-      </div>
-      <div className="text-[12px] text-gray-500">ID: {dash(record?.id)}</div>
-    </div>
-
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <Field label="Gender">{dash(record?.gender)}</Field>
-      <Field label="BVN">
-        <span className="text-[13px]">{dash(record?.bvn)}</span>
-        {record?.bvn ? <CopyBtn value={record.bvn} /> : null}
-      </Field>
-      <Field label="NIN">
-        <span className="text-[13px]">{dash(record?.nin)}</span>
-        {record?.nin ? <CopyBtn value={record.nin} /> : null}
-      </Field>
-      <Field label="ID Type">{dash(record?.id_type)}</Field>
-      <Field label="Copy of ID (value)"><LinkField url={record?.copy_id_type} /></Field>
-      <Field label="Copy Utility Bill (value)"><LinkField url={record?.copy_utility_bill} /></Field>
-      <Field label="Utility Bill Type">{dash(record?.copy_utility_bill_type)}</Field>
-      <Field label="Joined">{dash(record?.createdAtReadable)}</Field>
-      <Field label="Updated">{dash(record?.updatedAtReadable)}</Field>
-    </div>
-  </div>
-);
-
-/* ===========================
-   Create/Edit Form
-   =========================== */
-const CreatorForm = ({ mode, record, onSubmit, submitting }) => {
-  const [gender, setGender] = useState(record?.gender ?? "male");
-  const [bvn, setBvn] = useState(record?.bvn ?? "");
-  const [nin, setNin] = useState(record?.nin ?? "");
-  const [idType, setIdType] = useState(record?.id_type ?? "national_id");
-  const [copyIdType, setCopyIdType] = useState(record?.copy_id_type ?? "");
-  const [copyUtilityBill, setCopyUtilityBill] = useState(record?.copy_utility_bill ?? "");
-  const [copyUtilityBillType, setCopyUtilityBillType] = useState(record?.copy_utility_bill_type ?? "");
-
-  const isView = mode === "view";
-
-  useEffect(() => {
-    setGender(record?.gender ?? "male");
-    setBvn(record?.bvn ?? "");
-    setNin(record?.nin ?? "");
-    setIdType(record?.id_type ?? "national_id");
-    setCopyIdType(record?.copy_id_type ?? "");
-    setCopyUtilityBill(record?.copy_utility_bill ?? "");
-    setCopyUtilityBillType(record?.copy_utility_bill_type ?? "");
-  }, [record]);
-
-  if (isView) return <CreatorDetailsView record={record} />;
-
-  return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({
-          gender,
-          bvn,
-          nin,
-          id_type: idType,
-          copy_id_type: copyIdType,
-          copy_utility_bill: copyUtilityBill,
-          copy_utility_bill_type: copyUtilityBillType,
-        });
-      }}
-    >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Gender</label>
-          <select disabled={isView} value={gender} onChange={(e) => setGender(e.target.value)} className={selectBase}>
-            <option value="male">male</option>
-            <option value="female">female</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">BVN</label>
-          <input
-            type="text"
-            value={bvn}
-            disabled={isView}
-            onChange={(e) => setBvn(e.target.value)}
-            className={inputBase}
-            placeholder="22344760934"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">NIN</label>
-          <input
-            type="text"
-            value={nin}
-            disabled={isView}
-            onChange={(e) => setNin(e.target.value)}
-            className={inputBase}
-            placeholder="23298489129"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">ID Type</label>
-          <select disabled={isView} value={idType} onChange={(e) => setIdType(e.target.value)} className={selectBase}>
-            <option value="national_id">national_id</option>
-            <option value="driver_license">driver_license</option>
-            <option value="passport">passport</option>
-            <option value="voters_card">voters_card</option>
-          </select>
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium mb-1">Copy of ID (value)</label>
-          <input
-            type="text"
-            value={copyIdType}
-            disabled={isView}
-            onChange={(e) => setCopyIdType(e.target.value)}
-            className={inputBase}
-            placeholder="https://… or value"
-            required
-          />
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium mb-1">Copy Utility Bill (value)</label>
-          <input
-            type="text"
-            value={copyUtilityBill}
-            disabled={isView}
-            onChange={(e) => setCopyUtilityBill(e.target.value)}
-            className={inputBase}
-            placeholder="https://… or value"
-            required
-          />
-        </div>
-
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium mb-1">Utility Bill Type</label>
-          <input
-            type="text"
-            value={copyUtilityBillType}
-            disabled={isView}
-            onChange={(e) => setCopyUtilityBillType(e.target.value)}
-            className={inputBase}
-            placeholder="e.g., PHCN"
-            required
-          />
-        </div>
-      </div>
-
-      <button type="submit" id="__modal_submit_btn__" className="hidden" />
-    </form>
-  );
-};
-
 /* ===========================
    Tabs (underline style)
    =========================== */
@@ -418,6 +244,7 @@ const Tabs = ({ value, onChange }) => {
 const CreatorsTable = ({
   rows,
   q,
+  loading,       // ← NEW
   onView,
   onEdit,
   onToggle,
@@ -429,7 +256,7 @@ const CreatorsTable = ({
   const emptyText = q ? `No results found for “${q}”` : "No creators yet.";
 
   return (
-    <div className="rounded-xl border border-gray-200 overflow-hidden">
+    <div className="relative rounded-xl border border-gray-200 overflow-hidden">
       <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-100">
@@ -445,49 +272,65 @@ const CreatorsTable = ({
             </tr>
           </thead>
           <tbody>
-            {safeRows.map((row) => {
-              const isActive = toNormStatus(row.status) === "active";
-              return (
-                <tr key={row.id} className="border-t border-gray-100">
-                  <td className="px-4 py-3">{dash(row.id)}</td>
-                  <td className="px-4 py-3">{dash(row.name)}</td>
-                  <td className="px-4 py-3 capitalize">{dash(row.gender)}</td>
-                  <td className="px-4 py-3">{dash(row.nin)}</td>
-                  <td className="px-4 py-3">{dash(row.createdAtReadable)}</td>
-                  <td className="px-4 py-3">{dash(row.updatedAtReadable)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <StatusPill value={toNormStatus(row.status)} />
-                      <Toggle checked={isActive} onChange={() => onToggle(row)} />
-                      {togglingId === row.id && (
-                        <span className="inline-flex items-center text-xs text-gray-500">
-                          <Spinner className="!text-gray-500 mr-1" /> updating…
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <ThreeDotsMenu
-                      items={[
-                        { label: "View", onClick: () => onView(row) },
-                        { label: "Edit", onClick: () => onEdit(row) },
-                      ]}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-
-            {safeRows.length === 0 && (
+            {safeRows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
-                  {emptyText}
+                <td colSpan={8} className="px-4 py-10 text-center text-gray-500">
+                  {loading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Spinner className="!text-gray-500" /> Loading…
+                    </span>
+                  ) : (
+                    emptyText
+                  )}
                 </td>
               </tr>
+            ) : (
+              safeRows.map((row) => {
+                const active = getStatus(row) === "active";
+                const name = getName(row);
+                return (
+                  <tr key={row.id} className="border-t border-gray-100">
+                    <td className="px-4 py-3">{dash(row.id)}</td>
+                    <td className="px-4 py-3">{dash(name)}</td>
+                    <td className="px-4 py-3 capitalize">{dash(row.gender || row.user?.gender)}</td>
+                    <td className="px-4 py-3">{dash(row.nin || row.user?.nin)}</td>
+                    <td className="px-4 py-3">{dash(row.createdAtReadable || fmtDate(row.created_at))}</td>
+                    <td className="px-4 py-3">{dash(row.updatedAtReadable || fmtDate(row.updated_at))}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <StatusPill value={getStatus(row)} />
+                        <Toggle checked={active} onChange={() => onToggle(row)} />
+                        {togglingId === row.id && (
+                          <span className="inline-flex items-center text-xs text-gray-500">
+                            <Spinner className="!text-gray-500 mr-1" /> updating…
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <ThreeDotsMenu
+                        items={[
+                          { label: "View", onClick: () => onView(row) },
+                          { label: "Edit", onClick: () => onEdit(row) },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Inline refresh overlay when we already have rows */}
+      {loading && safeRows.length > 0 && (
+        <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
+          <span className="inline-flex items-center gap-2 text-sm text-gray-700">
+            <Spinner className="!text-gray-700" /> Refreshing…
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-white border-t border-gray-200">
         <div className="text-sm text-gray-600">{footerLeft}</div>
@@ -498,16 +341,165 @@ const CreatorsTable = ({
 };
 
 /* ===========================
+   Details Modal
+   =========================== */
+const CreatorDetails = ({ data, onToggle, togglingId }) => {
+  if (!data) return null;
+  const active = getStatus(data) === "active";
+  const name = getName(data);
+  const avatar = data.user?.image;
+
+  const serviceCards = (Array.isArray(data.services) ? data.services : []).map((s) => {
+    const bookings = Array.isArray(s.bookings) ? s.bookings : [];
+    return (
+      <div key={s.id} className="rounded-xl border border-gray-200 p-3 space-y-2">
+        <div className="flex items-center gap-3">
+          {isImageUrl(s.cover_image) && (
+            <img src={toHttpUrl(s.cover_image)} alt="" className="w-16 h-16 rounded object-cover border" />
+          )}
+          <div className="min-w-0">
+            <div className="font-medium text-sm truncate">{dash(s.service_name)}</div>
+            <div className="text-xs text-gray-600">Rate: {dash(s.rate)}</div>
+            <div className="text-xs text-gray-600">Status: {dash(s.status)}</div>
+          </div>
+          <div className="ml-auto">
+            <LinkField url={s.link} />
+          </div>
+        </div>
+
+        {bookings.length > 0 && (
+          <div className="pt-1">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">
+              Bookings ({bookings.length})
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border border-gray-100 rounded">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left px-2 py-1">ID</th>
+                    <th className="text-left px-2 py-1">Dates</th>
+                    <th className="text-left px-2 py-1">Status</th>
+                    <th className="text-left px-2 py-1">Customer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bookings.map((b) => (
+                    <tr key={b.id} className="border-t">
+                      <td className="px-2 py-1">{dash(b.id)}</td>
+                      <td className="px-2 py-1">{Array.isArray(b.date) ? b.date.join(", ") : dash(b.date)}</td>
+                      <td className="px-2 py-1">{dash(b.status)}</td>
+                      <td className="px-2 py-1">
+                        {dash(
+                          [b.user?.first_name, b.user?.last_name].filter(Boolean).join(" ") ||
+                            b.user?.email
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Header strip */}
+      <div className="flex items-center gap-3">
+        {isImageUrl(avatar) && (
+          <img src={toHttpUrl(avatar)} alt="" className="w-12 h-12 rounded-full object-cover border" />
+        )}
+        <div className="min-w-0">
+          <div className="text-lg font-semibold truncate">{dash(name)}</div>
+          <div className="text-xs text-gray-600">ID: {dash(data.id)}</div>
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <StatusPill value={getStatus(data)} />
+          <Toggle checked={active} onChange={() => onToggle(data)} />
+          {togglingId === data.id && (
+            <span className="inline-flex items-center text-xs text-gray-500">
+              <Spinner className="!text-gray-500 mr-1" /> updating…
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Basic / KYC / Links */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-3">
+          <Field label="Job title">{dash(data.job_title)}</Field>
+          <Field label="Bio">{dash(data.bio)}</Field>
+          <Field label="Gender">{dash(data.gender || data.user?.gender)}</Field>
+          <Field label="NIN">
+            <span>{dash(data.nin || data.user?.nin)}</span>
+            <CopyBtn value={data.nin || data.user?.nin} />
+          </Field>
+          <Field label="Phone">
+            <span className="inline-flex items-center gap-2">
+              <FiPhone className="w-4 h-4 text-gray-500" />
+              {dash(data.user?.phone_number || data.phone_number)}
+            </span>
+          </Field>
+          <Field label="Email">
+            <span className="inline-flex items-center gap-2">
+              <FiMail className="w-4 h-4 text-gray-500" />
+              {dash(data.user?.email)}
+              <CopyBtn value={data.user?.email} />
+            </span>
+          </Field>
+        </div>
+
+        <div className="space-y-3">
+          <Field label="Location">{dash(data.location)}</Field>
+          <Field label="Created">{dash(fmtDate(data.created_at))}</Field>
+          <Field label="Updated">{dash(fmtDate(data.updated_at))}</Field>
+          <Field label="Verified">{String(data.verified ? "Yes" : "No")}</Field>
+          <Field label="ID Type">{dash(data.id_type)}</Field>
+          <Field label="Copy of ID">
+            <LinkField url={data.copy_of_id} />
+          </Field>
+        </div>
+
+        <div className="space-y-3">
+          <Field label="Utility bill">{dash(data.utility_bill)}</Field>
+          <Field label="Copy of utility bill">
+            <LinkField url={data.copy_of_utility_bill} />
+          </Field>
+          <Field label="LinkedIn">
+            <LinkField url={data.linkedin} />
+          </Field>
+          <Field label="X">
+            <LinkField url={data.x} />
+          </Field>
+          <Field label="Instagram">
+            <LinkField url={data.instagram} />
+          </Field>
+        </div>
+      </div>
+
+      {/* Services + bookings */}
+      {serviceCards.length > 0 && (
+        <>
+          <div className="text-sm font-semibold">Services</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{serviceCards}</div>
+        </>
+      )}
+    </div>
+  );
+};
+
+/* ===========================
    Page
    =========================== */
 const Creators = () => {
   const navigate = useNavigate();
-  useAuthGuard(navigate); // shared guard
+  useAuthGuard(navigate);
 
   const toast = useToastAlert();
-  const { creators, pagination, fetchCreators, toggleCreatorStatus } = useCreatorsStore();
-
-  const [hydrated, setHydrated] = useState(false);
+  const { creators, pagination, fetchCreators, toggleCreatorStatus, loading } = useCreatorsStore();
 
   // Search/filter/page (server-driven); Enter = instant
   const [q, setQ] = useState("");
@@ -515,17 +507,15 @@ const Creators = () => {
   const [page, setPage] = useState(1);
   const perPage = 10;
 
-  // Tabs
-  const [tab, setTab] = useState("assets_creators"); // assets_creators | service_providers | artists
+  // Tabs (visual only; classification still supported defensively)
+  const [tab, setTab] = useState("service_providers");
 
   const [togglingId, setTogglingId] = useState(null);
+  const [viewRec, setViewRec] = useState(null);
 
-  // Initial fetch
+  // Initial fetch (table renders immediately using cached rows if any)
   useEffect(() => {
-    (async () => {
-      await fetchCreators?.({ page: 1, per_page: perPage, q: "", status: "" });
-      setHydrated(true);
-    })();
+    fetchCreators?.({ page: 1, per_page: perPage, q: "", status: "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -549,22 +539,31 @@ const Creators = () => {
     [q, status, fetchCreators]
   );
 
-  const allRows = useMemo(() => (Array.isArray(creators) ? creators : []), [creators]);
+  const allRowsRaw = useMemo(() => (Array.isArray(creators) ? creators : []), [creators]);
+
+  // Defensive normalization
+  const allRows = useMemo(
+    () =>
+      allRowsRaw.map((r) => ({
+        ...r,
+        name: getName(r),
+        gender: r.gender || r.user?.gender,
+        nin: r.nin || r.user?.nin,
+        createdAtReadable: r.createdAtReadable || fmtDate(r.created_at),
+        updatedAtReadable: r.updatedAtReadable || fmtDate(r.updated_at),
+      })),
+    [allRowsRaw]
+  );
 
   // Classification + counts
   const buckets = useMemo(() => {
     const map = { assets_creators: [], service_providers: [], artists: [] };
-    for (const r of allRows) {
-      map[classifyType(r)].push(r);
-    }
+    for (const r of allRows) map[classifyType(r)].push(r);
     return map;
   }, [allRows]);
 
   // Rows shown for current tab
   const rows = useMemo(() => buckets[tab] || [], [buckets, tab]);
-
-  // Status filter options built from current rows
-  const statusOptions = ["active", "inactive"];
 
   // Toggle status handler
   const handleToggle = async (row) => {
@@ -573,6 +572,10 @@ const Creators = () => {
       await toggleCreatorStatus?.(row.id);
       toast.add({ type: "success", title: "Status updated" });
       await fetchCreators?.({ page, per_page: perPage, q, status });
+      if (viewRec?.id === row.id) {
+        const updated = (Array.isArray(creators) ? creators : []).find((c) => c.id === row.id);
+        if (updated) setViewRec(updated);
+      }
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Status change failed." });
       console.error(e);
@@ -584,12 +587,16 @@ const Creators = () => {
   // Pagination math (using API pagination if provided)
   const total = pagination?.total ?? allRows.length ?? 0;
   const per = pagination?.per_page || perPage;
-  const totalPages = Math.max(1, Math.ceil((pagination?.total || 0) / per));
+  const totalPages = Math.max(1, Math.ceil((pagination?.total || total) / per));
   const startIdx = total === 0 ? 0 : (page - 1) * per + 1;
   const endIdx = total === 0 ? 0 : Math.min(page * per, total);
 
   const footerLeftText =
-    total === 0 ? (q ? `No results for “${q}”` : "No records") : `Showing ${startIdx}–${endIdx} of ${total} record${total > 1 ? "s" : ""}`;
+    total === 0
+      ? q
+        ? `No results for “${q}”`
+        : "No records"
+      : `Showing ${startIdx}–${endIdx} of ${total} record${total > 1 ? "s" : ""}`;
 
   const footerRightControls = (
     <div className="flex items-center gap-2">
@@ -615,29 +622,27 @@ const Creators = () => {
     </div>
   );
 
-  // Summary counts (derived if API doesn’t provide)
-  const formatNum = (n) =>
-    typeof n === "number" ? n.toLocaleString("en-NG") : typeof n === "string" ? n : "—";
-
-  const summary = {
-    totalCreators: total,
-    assets: buckets.assets_creators.length,
-    services: buckets.service_providers.length,
-    artists: buckets.artists.length,
-  };
-
-  // Apply status and search filters on the *current-tab* rows for display
+  // Apply status + search filters on the *current-tab* rows for display
   const filteredRows = useMemo(() => {
     let list = rows;
-    if (status) list = list.filter((r) => toNormStatus(r.status) === status);
+    if (status) list = list.filter((r) => getStatus(r) === status);
     if (q) {
       const qv = q.toLowerCase();
-      list = list.filter(
-        (r) =>
-          String(r.name || "").toLowerCase().includes(qv) ||
-          String(r.nin || "").toLowerCase().includes(qv) ||
-          String(r.id || "").toLowerCase().includes(qv)
-      );
+      list = list.filter((r) => {
+        const hay = [
+          getName(r),
+          r.nin,
+          r.id,
+          r.user?.email,
+          r.user?.phone_number,
+          r.job_title,
+          ...(Array.isArray(r.services) ? r.services.map((s) => s.service_name) : []),
+        ]
+          .filter(Boolean)
+          .map(String)
+          .map((s) => s.toLowerCase());
+        return hay.some((s) => s.includes(qv));
+      });
     }
     return list;
   }, [rows, status, q]);
@@ -650,7 +655,7 @@ const Creators = () => {
         <Sidebar />
         <div
           id="app-layout-content"
-          className="relative min-h-screen w-full min-w-[100vw] md:min-w-0 ml=[15.625rem] md:ml-[15.625rem] [transition:margin_0.25s_ease-out]"
+          className="relative min-h-screen w-full min-w-[100vw] md:min-w-0 ml-[15.625rem] [transition:margin_0.25s_ease-out]" // ← fixed ml class
         >
           <Navbar />
 
@@ -661,13 +666,13 @@ const Creators = () => {
               <div className="px-6" />
             </div>
 
-            {/* Summary cards */}
+            {/* Summary cards (derived) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
               {[
-                { label: "Total Creators", value: formatNum(summary.totalCreators) },
-                { label: "Assets Creators", value: formatNum(summary.assets) },
-                { label: "Service Providers", value: formatNum(summary.services) },
-                { label: "Artists", value: formatNum(summary.artists) },
+                { label: "Total Creators", value: (pagination?.total ?? allRows.length ?? 0).toLocaleString("en-NG") },
+                { label: "Assets Creators", value: buckets.assets_creators.length.toLocaleString("en-NG") },
+                { label: "Service Providers", value: buckets.service_providers.length.toLocaleString("en-NG") },
+                { label: "Artists", value: buckets.artists.length.toLocaleString("en-NG") },
               ].map((c) => (
                 <div key={c.label} className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                   <div className="text-xs text-gray-600 mb-2">{c.label}</div>
@@ -676,7 +681,7 @@ const Creators = () => {
               ))}
             </div>
 
-            {/* Tabs + Search (search replaces removed button) */}
+            {/* Tabs + Search */}
             <div className="mb-3 bg-white rounded-xl border border-gray-200 px-4 pt-2 pb-3 shadow-sm">
               <div className="flex items-center justify-between">
                 <Tabs value={tab} onChange={setTab} />
@@ -702,7 +707,7 @@ const Creators = () => {
               </div>
             </div>
 
-            {/* Filters (status only) */}
+            {/* Filters (status only -> sent as active=true|false) */}
             <div className="mb-4 flex items-center gap-3">
               <label className="text-sm text-gray-700">Status</label>
               <select
@@ -723,31 +728,30 @@ const Creators = () => {
               </select>
             </div>
 
-            {/* Table / Loader */}
-            {!hydrated ? (
-              <CenterLoader />
-            ) : (
-              <CreatorsTable
-                rows={filteredRows}
-                q={q}
-                onView={(rec) => {
-                  // open read-only
-                  console.log(rec);
-                }}
-                onEdit={(rec) => {
-                  // open edit
-                  console.log(rec);
-                }}
-                onToggle={handleToggle}
-                togglingId={togglingId}
-                footerLeft={footerLeftText}
-                footerRight={footerRightControls}
-              />
-            )}
+            {/* Table always renders; loader appears inside it */}
+            <CreatorsTable
+              rows={filteredRows}
+              q={q}
+              loading={loading}
+              onView={(rec) => setViewRec(rec)}
+              onEdit={(rec) => {
+                console.log("Edit clicked", rec);
+              }}
+              onToggle={handleToggle}
+              togglingId={togglingId}
+              footerLeft={footerLeftText}
+              footerRight={footerRightControls}
+            />
           </div>
 
-          {/* Modal placeholder in case you still use it elsewhere */}
-          <Modal open={false} title="" onClose={() => {}} />
+          {/* Details modal */}
+          <Modal
+            open={!!viewRec}
+            title={viewRec ? `Creator: ${getName(viewRec) || `#${viewRec.id}`}` : ""}
+            onClose={() => setViewRec(null)}
+          >
+            <CreatorDetails data={viewRec} onToggle={handleToggle} togglingId={togglingId} />
+          </Modal>
 
           <Footer />
         </div>

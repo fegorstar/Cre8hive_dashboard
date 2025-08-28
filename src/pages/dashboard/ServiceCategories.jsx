@@ -1,9 +1,8 @@
 // src/pages/ServiceCategories/ServiceCategories.jsx
-// - Tabs use underline style: active has thick BRAND_RGB underline and text; inactive has subtle gray underline
-// - View = read-only details (no inputs)
-// - Edit/Create = full-width inputs inside modal
-// - Delete dialog with circular loader
-// - Category filter uses "category_id" correctly (string/number safe)
+// Matches Creators/Members loader UX:
+//  - Table always renders
+//  - When there are NO rows: show a single "Loading…" row (no overlay)
+//  - When there ARE rows and we're reloading: show centered overlay spinner (no fade)
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -17,7 +16,7 @@ import ConfirmDialog from "../../components/common/ConfirmDialog";
 import { ToastAlert, useToastAlert } from "../../components/common/ToastAlert";
 import useClickOutside from "../../lib/useClickOutside";
 import useAuthGuard from "../../lib/useAuthGuard";
-import { Spinner, CenterLoader } from "../../components/common/Spinner"; // ⬅️ external spinner
+import { Spinner } from "../../components/common/Spinner";
 
 const BRAND_RGB = "rgb(77, 52, 144)";
 
@@ -42,8 +41,8 @@ const Tabs = ({ value, onChange }) => {
                 active ? "border-b-4" : "border-b-2"
               } border-b rounded-t-lg`}
               style={{
-                color: active ? BRAND_RGB : "#374151",              // text color
-                borderBottomColor: active ? BRAND_RGB : "#D1D5DB",  // gray-300 for inactive
+                color: active ? BRAND_RGB : "#374151",
+                borderBottomColor: active ? BRAND_RGB : "#D1D5DB",
                 backgroundColor: "transparent",
               }}
             >
@@ -152,9 +151,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
       className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
-        const payload = isSub
-          ? { name, parentCategoryId: Number(parentCategoryId) }
-          : { name };
+        const payload = isSub ? { name, parentCategoryId: Number(parentCategoryId) } : { name };
         onSubmit(payload);
       }}
     >
@@ -178,7 +175,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
           <select
             value={parentCategoryId || ""}
             onChange={(e) => setParentCategoryId(e.target.value)}
-            className={`${selectBase} w-full`} // full width INSIDE modal
+            className={`${selectBase} w-full`}
             required
           >
             <option value="" disabled>
@@ -198,10 +195,19 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
   );
 };
 
-/* ---------- Table shells ---------- */
-const TableShell = ({ children, footerLeft, footerRight }) => (
-  <div className="rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
+/* ---------- Table shells (overlay only when there are rows) ---------- */
+const TableShell = ({ children, footerLeft, footerRight, showOverlay }) => (
+  <div className="relative rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
     <div className="overflow-auto">{children}</div>
+
+    {showOverlay && (
+      <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+        <span className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <Spinner className="!text-gray-700" /> Loading…
+        </span>
+      </div>
+    )}
+
     <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-t border-gray-200">
       <div className="text-sm text-gray-600">{footerLeft}</div>
       <div>{footerRight}</div>
@@ -209,10 +215,11 @@ const TableShell = ({ children, footerLeft, footerRight }) => (
   </div>
 );
 
-const CategoriesTable = ({ rows, onView, onEdit, onDelete, footerLeft, footerRight }) => {
+const CategoriesTable = ({ rows, loading, onView, onEdit, onDelete, footerLeft, footerRight }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
+  const hasRows = safeRows.length > 0;
   return (
-    <TableShell footerLeft={footerLeft} footerRight={footerRight}>
+    <TableShell footerLeft={footerLeft} footerRight={footerRight} showOverlay={loading && hasRows}>
       <table className="w-full text-sm">
         <thead className="bg-gray-100">
           <tr>
@@ -223,28 +230,35 @@ const CategoriesTable = ({ rows, onView, onEdit, onDelete, footerLeft, footerRig
           </tr>
         </thead>
         <tbody>
-          {safeRows.map((row) => (
-            <tr key={row.id ?? row.name} className="border-t border-gray-100">
-              <td className="px-4 py-3">{row.name}</td>
-              <td className="px-4 py-3">{row.createdAtReadable}</td>
-              <td className="px-4 py-3">{row.updatedAtReadable}</td>
-              <td className="px-4 py-3 text-right">
-                <ThreeDotsMenu
-                  items={[
-                    { label: "View", onClick: () => onView(row) },
-                    { label: "Edit", onClick: () => onEdit(row) },
-                    { label: "Delete", onClick: () => onDelete(row) },
-                  ]}
-                />
-              </td>
-            </tr>
-          ))}
-          {safeRows.length === 0 && (
+          {!hasRows ? (
             <tr>
-              <td colSpan={4} className="px-4 py-6 text-center text-gray-500">
-                No categories yet.
+              <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Spinner className="!text-gray-500" /> Loading…
+                  </span>
+                ) : (
+                  "No categories yet."
+                )}
               </td>
             </tr>
+          ) : (
+            safeRows.map((row) => (
+              <tr key={row.id ?? row.name} className="border-t border-gray-100">
+                <td className="px-4 py-3">{row.name}</td>
+                <td className="px-4 py-3">{row.createdAtReadable}</td>
+                <td className="px-4 py-3">{row.updatedAtReadable}</td>
+                <td className="px-4 py-3 text-right">
+                  <ThreeDotsMenu
+                    items={[
+                      { label: "View", onClick: () => onView(row) },
+                      { label: "Edit", onClick: () => onEdit(row) },
+                      { label: "Delete", onClick: () => onDelete(row) },
+                    ]}
+                  />
+                </td>
+              </tr>
+            ))
           )}
         </tbody>
       </table>
@@ -254,6 +268,7 @@ const CategoriesTable = ({ rows, onView, onEdit, onDelete, footerLeft, footerRig
 
 const SubcategoriesTable = ({
   rows,
+  loading,
   categoryNameById,
   onView,
   onEdit,
@@ -262,8 +277,9 @@ const SubcategoriesTable = ({
   footerRight,
 }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
+  const hasRows = safeRows.length > 0;
   return (
-    <TableShell footerLeft={footerLeft} footerRight={footerRight}>
+    <TableShell footerLeft={footerLeft} footerRight={footerRight} showOverlay={loading && hasRows}>
       <table className="w-full text-sm">
         <thead className="bg-gray-100">
           <tr>
@@ -275,33 +291,40 @@ const SubcategoriesTable = ({
           </tr>
         </thead>
         <tbody>
-          {safeRows.map((row) => (
-            <tr key={row.id ?? row.name} className="border-t border-gray-100">
-              <td className="px-4 py-3">{row.name}</td>
-              <td className="px-4 py-3">
-                {categoryNameById.get(Number(row.parentCategoryId)) ||
-                  categoryNameById.get(Number(row.category_id)) ||
-                  "—"}
-              </td>
-              <td className="px-4 py-3">{row.createdAtReadable}</td>
-              <td className="px-4 py-3">{row.updatedAtReadable}</td>
-              <td className="px-4 py-3 text-right">
-                <ThreeDotsMenu
-                  items={[
-                    { label: "View", onClick: () => onView(row) },
-                    { label: "Edit", onClick: () => onEdit(row) },
-                    { label: "Delete", onClick: () => onDelete(row) },
-                  ]}
-                />
-              </td>
-            </tr>
-          ))}
-          {safeRows.length === 0 && (
+          {!hasRows ? (
             <tr>
-              <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
-                No subcategories.
+              <td colSpan={5} className="px-4 py-10 text-center text-gray-500">
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Spinner className="!text-gray-500" /> Loading…
+                  </span>
+                ) : (
+                  "No subcategories."
+                )}
               </td>
             </tr>
+          ) : (
+            safeRows.map((row) => (
+              <tr key={row.id ?? row.name} className="border-t border-gray-100">
+                <td className="px-4 py-3">{row.name}</td>
+                <td className="px-4 py-3">
+                  {categoryNameById.get(Number(row.parentCategoryId)) ||
+                    categoryNameById.get(Number(row.category_id)) ||
+                    "—"}
+                </td>
+                <td className="px-4 py-3">{row.createdAtReadable}</td>
+                <td className="px-4 py-3">{row.updatedAtReadable}</td>
+                <td className="px-4 py-3 text-right">
+                  <ThreeDotsMenu
+                    items={[
+                      { label: "View", onClick: () => onView(row) },
+                      { label: "Edit", onClick: () => onEdit(row) },
+                      { label: "Delete", onClick: () => onDelete(row) },
+                    ]}
+                  />
+                </td>
+              </tr>
+            ))
           )}
         </tbody>
       </table>
@@ -337,7 +360,7 @@ const useServiceCategoriesStoreActions = () => {
 
 const ServiceCategories = () => {
   const navigate = useNavigate();
-  useAuthGuard(navigate); // externalized useEffect guard
+  useAuthGuard(navigate);
 
   const toast = useToastAlert();
 
@@ -365,8 +388,9 @@ const ServiceCategories = () => {
   const [tab, setTab] = useState("categories");
   const [subcatFilter, setSubcatFilter] = useState("ALL");
 
-  const [catsHydrated, setCatsHydrated] = useState(false);
-  const [subsHydrated, setSubsHydrated] = useState(false);
+  // Local loading flags to control the table loaders precisely
+  const [catsLoading, setCatsLoading] = useState(false);
+  const [subsLoading, setSubsLoading] = useState(false);
 
   const perPage = 10;
   const [catsPage, setCatsPage] = useState(1);
@@ -380,21 +404,31 @@ const ServiceCategories = () => {
   // initial categories
   useEffect(() => {
     (async () => {
-      await fetchCategories();
-      setCatsHydrated(true);
+      try {
+        setCatsLoading(true);
+        await fetchCategories();
+      } catch (e) {
+        toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load categories." });
+      } finally {
+        setCatsLoading(false);
+      }
     })();
-  }, [fetchCategories]);
+  }, [fetchCategories]); // eslint-disable-line
 
-  // load subcats on tab/filter
+  // load subcats on tab change
   useEffect(() => {
     if (tab !== "subcategories") return;
-    setSubsHydrated(false);
     (async () => {
-      // Fetch ALL; UI filters reliably below
-      await fetchSubCategories(null);
-      setSubsHydrated(true);
+      try {
+        setSubsLoading(true);
+        await fetchSubCategories(null); // fetch all; UI filters below
+      } catch (e) {
+        toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load subcategories." });
+      } finally {
+        setSubsLoading(false);
+      }
     })();
-  }, [tab, fetchSubCategories]);
+  }, [tab, fetchSubCategories]); // eslint-disable-line
 
   /* ----- PAGING (Categories) ----- */
   const parentRows = safeCategories;
@@ -512,14 +546,20 @@ const ServiceCategories = () => {
       if (type === "category") {
         await deleteCategory(row.id);
         toast.add({ type: "success", title: "Deleted", message: "Category deleted successfully." });
+        setCatsLoading(true);
         await fetchCategories();
+        setCatsLoading(false);
         if (tab === "subcategories") {
-          await fetchSubCategories(null); // reload all; UI keeps filter
+          setSubsLoading(true);
+          await fetchSubCategories(null);
+          setSubsLoading(false);
         }
       } else {
         await deleteSubCategory(row.id);
         toast.add({ type: "success", title: "Deleted", message: "Subcategory deleted successfully." });
-        await fetchSubCategories(null); // reload all; UI keeps filter
+        setSubsLoading(true);
+        await fetchSubCategories(null);
+        setSubsLoading(false);
       }
       setConfirmOpen(false);
       setConfirmPayload(null);
@@ -542,7 +582,9 @@ const ServiceCategories = () => {
           await createSubCategory(payload);
           toast.add({ type: "success", title: "Created", message: "Subcategory created successfully." });
         }
-        await fetchSubCategories(null); // reload all; UI filter applies
+        setSubsLoading(true);
+        await fetchSubCategories(null);
+        setSubsLoading(false);
       } else {
         if (modalMode === "edit" && modalRecord?.id) {
           await updateCategory(modalRecord.id, payload);
@@ -551,7 +593,9 @@ const ServiceCategories = () => {
           await createCategory(payload);
           toast.add({ type: "success", title: "Created", message: "Category created successfully." });
         }
+        setCatsLoading(true);
         await fetchCategories();
+        setCatsLoading(false);
       }
       closeModal();
     } catch (e) {
@@ -566,6 +610,13 @@ const ServiceCategories = () => {
   const modalTitle = `${modalMode[0].toUpperCase()}${modalMode.slice(1)} ${
     modalType === "category" ? "Category" : "Subcategory"
   }`;
+
+  /* ----- paging helpers ----- */
+  const catsFooterLeft = makeFooterLeft(catsTotal, catsStart, catsEnd);
+  const catsFooterRight = makeFooterRight(catsPage, catsTotalPages, setCatsPage);
+
+  const subsFooterLeft = makeFooterLeft(subsTotal, subsStart, subsEnd);
+  const subsFooterRight = makeFooterRight(subsPage, subsTotalPages, setSubsPage);
 
   return (
     <main>
@@ -634,34 +685,32 @@ const ServiceCategories = () => {
               </div>
             )}
 
-            {/* Tables */}
+            {/* Tables: always render; loader inside table (row/overlay) */}
             <div className="space-y-4">
-              {tab === "categories" && !catsHydrated ? (
-                <CenterLoader />
-              ) : tab === "categories" ? (
+              {tab === "categories" && (
                 <CategoriesTable
                   rows={catsVisible}
+                  loading={catsLoading}
                   onView={(row) => openView("category", row)}
                   onEdit={(row) => openEdit("category", row)}
                   onDelete={askDeleteCategory}
-                  footerLeft={makeFooterLeft(catsTotal, catsStart, catsEnd)}
-                  footerRight={makeFooterRight(catsPage, catsTotalPages, setCatsPage)}
+                  footerLeft={catsFooterLeft}
+                  footerRight={catsFooterRight}
                 />
-              ) : null}
+              )}
 
-              {tab === "subcategories" && (!catsHydrated || !subsHydrated) ? (
-                <CenterLoader />
-              ) : tab === "subcategories" ? (
+              {tab === "subcategories" && (
                 <SubcategoriesTable
                   rows={subsVisible}
+                  loading={subsLoading}
                   categoryNameById={categoriesMap}
                   onView={(row) => openView("subcategory", row)}
                   onEdit={(row) => openEdit("subcategory", row)}
                   onDelete={askDeleteSubcategory}
-                  footerLeft={makeFooterLeft(subsTotal, subsStart, subsEnd)}
-                  footerRight={makeFooterRight(subsPage, subsTotalPages, setSubsPage)}
+                  footerLeft={subsFooterLeft}
+                  footerRight={subsFooterRight}
                 />
-              ) : null}
+              )}
             </div>
           </div>
 

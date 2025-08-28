@@ -1,7 +1,4 @@
 // src/pages/dashboard/Disputes.jsx
-// Disputes list UI (Pending/Resolved tabs w/ underline active style, search, paging, action menu)
-// Reuses your common building blocks: Modal, ConfirmDialog, ToastAlert, useClickOutside, useAuthGuard
-// Uses shared Spinner/CenterLoader from components/common/Spinner
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FiMoreVertical, FiSearch } from "react-icons/fi";
@@ -18,47 +15,60 @@ import useClickOutside from "../../lib/useClickOutside";
 import useAuthGuard from "../../lib/useAuthGuard";
 
 import useDisputesStore from "../../store/disputesStore";
-import { CenterLoader } from "../../components/common/Spinner"; // shared loader
+import { Spinner } from "../../components/common/Spinner";
 
 const BRAND_RGB = "rgb(77, 52, 144)";
 
+/* ---------- Status badge ---------- */
+const StatusPill = ({ value }) => {
+  const v = String(value || "").toLowerCase();
+  const cls =
+    v === "resolved"
+      ? "bg-green-50 text-green-700 border-green-200"
+      : "bg-yellow-50 text-yellow-700 border-yellow-200";
+  const label = v ? v[0].toUpperCase() + v.slice(1) : "—";
+  return (
+    <span className={`inline-flex px-2 py-0.5 text-[11px] rounded-full border font-medium ${cls}`}>
+      {label}
+    </span>
+  );
+};
 
-/* ---------- Tabs (active = brand text + thick underline) ---------- */
+/* ---------- Tabs ---------- */
 const Tabs = ({ value, onChange }) => {
-    const tabs = [
-      { key: "pending", label: "Pending" },
-      { key: "resolved", label: "Resolved" },
-    ];
-  
-    return (
-      <div className="border-b border-gray-200 flex items-center justify-between">
-        <div className="flex gap-2">
-          {tabs.map((t) => {
-            const active = value === t.key;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => onChange(t.key)}
-                aria-current={active ? "page" : undefined}
-                className={`relative -mb-px px-4 py-2 text-sm font-semibold transition-colors 
-                  ${active ? "border-b-4" : "border-b-2"} border-b`}
-                style={{
-                  color: active ? BRAND_RGB : "#374151",                // text color
-                  borderBottomColor: active ? BRAND_RGB : "#D1D5DB",   // gray-300 for inactive
-                  backgroundColor: "transparent",
-                }}
-              >
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
+  const tabs = [
+    { key: "pending", label: "Pending" },
+    { key: "resolved", label: "Resolved" },
+  ];
+  return (
+    <div className="border-b border-gray-200 flex items-center justify-between">
+      <div className="flex gap-2">
+        {tabs.map((t) => {
+          const active = value === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onChange(t.key)}
+              aria-current={active ? "page" : undefined}
+              className={`relative -mb-px px-4 py-2 text-sm font-semibold transition-colors ${
+                active ? "border-b-4" : "border-b-2"
+              } border-b`}
+              style={{
+                color: active ? BRAND_RGB : "#374151",
+                borderBottomColor: active ? BRAND_RGB : "#D1D5DB",
+                backgroundColor: "transparent",
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
-    );
-  };
-  
-  
+    </div>
+  );
+};
+
 /* ---------- 3-dots menu ---------- */
 const ThreeDotsMenu = ({ items = [] }) => {
   const [open, setOpen] = useState(false);
@@ -109,10 +119,19 @@ const DetailsList = ({ items }) => (
   </dl>
 );
 
-/* ---------- Table shell ---------- */
-const TableShell = ({ children, footerLeft, footerRight }) => (
-  <div className="rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
+/* ---------- Table shell (loader only when there are rows) ---------- */
+const TableShell = ({ children, footerLeft, footerRight, showOverlay }) => (
+  <div className="relative rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
     <div className="overflow-auto">{children}</div>
+
+    {showOverlay && (
+      <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+        <span className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <Spinner className="!text-gray-700" /> Loading…
+        </span>
+      </div>
+    )}
+
     <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-t border-gray-200">
       <div className="text-sm text-gray-600">{footerLeft}</div>
       <div>{footerRight}</div>
@@ -135,7 +154,7 @@ const Disputes = () => {
   const updateDispute = useDisputesStore((s) => s.updateDispute);
 
   // ui state
-  const [tab, setTab] = useState("pending"); // 'pending' | 'resolved'
+  const [tab, setTab] = useState("pending");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
 
@@ -163,41 +182,46 @@ const Disputes = () => {
     };
   }, [tab, page, fetchDisputes]); // eslint-disable-line
 
-  // filter (client-side by provider/client name)
+  // filter (client-side)
   const filteredRows = useMemo(() => {
-    if (!search.trim()) return disputes;
+    const list = Array.isArray(disputes) ? disputes : [];
+    if (!search.trim()) return list;
     const q = search.trim().toLowerCase();
-    return disputes.filter(
-      (d) =>
-        d.providerName?.toLowerCase().includes(q) ||
-        d.clientName?.toLowerCase().includes(q)
+    return list.filter((d) =>
+      [d.providerName, d.clientName, d.serviceName, d.initiatedBy, d.status]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
     );
   }, [disputes, search]);
 
+  const total = meta?.total || 0;
+  const currentPage = meta?.current_page || page || 1;
+  const lastPage = meta?.last_page || Math.max(1, currentPage);
+
   const footerLeft =
-    meta.total === 0
+    total === 0
       ? "No records"
-      : `Showing page ${meta.current_page} of ${meta.last_page} • Total ${meta.total} record${meta.total > 1 ? "s" : ""}`;
+      : `Showing page ${currentPage} of ${lastPage} • Total ${total} record${total > 1 ? "s" : ""}`;
 
   const footerRight = (
     <div className="flex items-center gap-2">
       <button
-        disabled={meta.current_page <= 1}
+        disabled={currentPage <= 1}
         onClick={() => setPage((p) => Math.max(1, p - 1))}
         className={`px-3 py-1.5 rounded-lg border ${
-          meta.current_page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+          currentPage <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
         }`}
       >
         Prev
       </button>
       <span className="text-sm text-gray-600">
-        Page {meta.current_page} / {meta.last_page}
+        Page {currentPage} / {lastPage}
       </span>
       <button
-        disabled={meta.current_page >= meta.last_page}
-        onClick={() => setPage((p) => Math.min(meta.last_page, p + 1))}
+        disabled={currentPage >= lastPage}
+        onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
         className={`px-3 py-1.5 rounded-lg border ${
-          meta.current_page >= meta.last_page ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+          currentPage >= lastPage ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
         }`}
       >
         Next
@@ -205,12 +229,29 @@ const Disputes = () => {
     </div>
   );
 
+  // normalize: if backend status is missing/wrong, fall back to the active tab
+  const normStatus = (v, fallback) => {
+    const s = String(v || "").toLowerCase();
+    if (s === "pending" || s === "resolved") return s;
+    return fallback; // ensure Pending tab shows Pending, etc.
+  };
+
+  // safe merge: only take non-empty, non-"—" values from `next`
+  const safeMerge = (prev, next) => {
+    const out = { ...(prev || {}) };
+    Object.entries(next || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "" && v !== "—") out[k] = v;
+    });
+    return out;
+  };
+
   // actions
   const openView = async (row) => {
+    setViewRecord(row); // prefill from table row
+    setViewOpen(true);
     try {
       const full = await getDispute(row.id);
-      setViewRecord(full);
-      setViewOpen(true);
+      setViewRecord((prev) => safeMerge(prev, full));
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Could not open dispute." });
     }
@@ -230,23 +271,18 @@ const Disputes = () => {
     if (!confirmPayload) return;
     setConfirmBusy(true);
     try {
-      const payload =
-        confirmPayload.action === "resolve"
-          ? { status: "resolved" }
-          : { status: "pending" };
-
+      const payload = confirmPayload.action === "resolve" ? { status: "resolved" } : { status: "pending" };
       await updateDispute(confirmPayload.id, payload);
 
       toast.add({
         type: "success",
         title: "Updated",
-        message:
-          confirmPayload.action === "resolve"
-            ? "Dispute marked as resolved."
-            : "Dispute reopened.",
+        message: confirmPayload.action === "resolve" ? "Dispute marked as resolved." : "Dispute reopened.",
       });
       setConfirmOpen(false);
       setConfirmPayload(null);
+      // optional: refresh list
+      await fetchDisputes({ status: tab, page: currentPage });
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Update failed." });
     } finally {
@@ -254,13 +290,15 @@ const Disputes = () => {
     }
   };
 
+  const hasRows = filteredRows.length > 0;
+  const showOverlay = loading && hasRows; // overlay only when we already have rows
+
   return (
     <main>
       <ToastAlert toasts={toast.toasts} remove={toast.remove} />
 
       <div className="overflow-x-hidden flex bg-gray-50">
         <Sidebar />
-
         <div
           id="app-layout-content"
           className="relative min-h-screen w-full min-w-[100vw] md:min-w-0 ml-[15.625rem] [transition:margin_0.25s_ease-out]"
@@ -283,85 +321,78 @@ const Disputes = () => {
                     setPage(1);
                   }}
                 />
-
-                {/* Search box — icon inside input, centered vertically, left-aligned */}
                 <div className="relative w-72">
                   <input
                     type="text"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search for name"
+                    placeholder="Search provider, client, service…"
                     autoComplete="off"
                     aria-label="Search for name"
-                    className="
-                      w-full
-                      rounded-lg
-                      border border-gray-300
-                      bg-white
-                      pl-9 pr-3 py-2
-                      text-sm font-normal text-gray-700
-                      placeholder:text-gray-400 placeholder:font-normal
-                      outline-none focus:ring-2 focus:ring-[#4D3490] focus:border-[#4D3490]
-                    "
+                    className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 py-2 text-sm font-normal text-gray-700 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-[#4D3490] focus:border-[#4D3490]"
                     style={{ fontFamily: "inherit" }}
                   />
-                  <FiSearch
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 z-10"
-                    aria-hidden="true"
-                  />
+                  <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 z-10" />
                 </div>
               </div>
             </div>
 
-            {/* Table */}
-            {loading ? (
-              <CenterLoader label="Loading…" tint={BRAND_RGB} />
-            ) : (
-              <div className="space-y-4">
-                <TableShell footerLeft={footerLeft} footerRight={footerRight}>
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-100">
+            {/* Table — always render; when empty show a single "Loading…" row; when rows exist show overlay if loading */}
+            <div className="space-y-4">
+              <TableShell footerLeft={footerLeft} footerRight={footerRight} showOverlay={showOverlay}>
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-semibold">Service</th>
+                      <th className="text-left px-4 py-3 font-semibold">Provider</th>
+                      <th className="text-left px-4 py-3 font-semibold">Client</th>
+                      <th className="text-left px-4 py-3 font-semibold">Initiated by</th>
+                      <th className="text-left px-4 py-3 font-semibold">Date initiated</th>
+                      <th className="text-left px-4 py-3 font-semibold">Status</th>
+                      <th className="text-right px-4 py-3 font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!hasRows ? (
                       <tr>
-                        <th className="text-left px-4 py-3 font-semibold">Service</th>
-                        <th className="text-left px-4 py-3 font-semibold">Provider</th>
-                        <th className="text-left px-4 py-3 font-semibold">Client</th>
-                        <th className="text-left px-4 py-3 font-semibold">Initiated by</th>
-                        <th className="text-left px-4 py-3 font-semibold">Date initiated</th>
-                        <th className="text-right px-4 py-3 font-semibold">Actions</th>
+                        <td colSpan={7} className="px-4 py-10 text-center text-gray-500">
+                          {loading ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Spinner className="!text-gray-500" /> Loading…
+                            </span>
+                          ) : (
+                            "No disputes found."
+                          )}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {filteredRows.map((row) => (
+                    ) : (
+                      filteredRows.map((row) => (
                         <tr key={row.id} className="border-t border-gray-100">
                           <td className="px-4 py-3">{row.serviceName}</td>
                           <td className="px-4 py-3">{row.providerName}</td>
                           <td className="px-4 py-3">{row.clientName}</td>
                           <td className="px-4 py-3">{row.initiatedBy}</td>
                           <td className="px-4 py-3">{row.createdAtReadable}</td>
+                          <td className="px-4 py-3">
+                            <StatusPill value={normStatus(row.status, tab)} />
+                          </td>
                           <td className="px-4 py-3 text-right">
                             <ThreeDotsMenu
                               items={[
                                 { label: "View", onClick: () => openView(row) },
-                                ...(tab === "pending"
+                                ...(normStatus(row.status, tab) === "pending"
                                   ? [{ label: "Mark as resolved", onClick: () => askResolve(row) }]
                                   : [{ label: "Reopen", onClick: () => askReopen(row) }]),
                               ]}
                             />
                           </td>
                         </tr>
-                      ))}
-                      {filteredRows.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
-                            No disputes found.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </TableShell>
-              </div>
-            )}
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </TableShell>
+            </div>
           </div>
 
           {/* View Modal */}
@@ -385,12 +416,16 @@ const Disputes = () => {
                   { label: "Provider", value: viewRecord.providerName },
                   { label: "Client", value: viewRecord.clientName },
                   { label: "Initiated by", value: viewRecord.initiatedBy },
-                  { label: "Status", value: viewRecord.status },
+                  { label: "Status", value: <StatusPill value={normStatus(viewRecord.status, tab)} /> },
                   { label: "Date initiated", value: viewRecord.createdAtReadable },
                 ]}
               />
             ) : (
-              <CenterLoader label="Loading details…" tint={BRAND_RGB} />
+              <div className="flex items-center justify-center py-10">
+                <span className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <Spinner className="!text-gray-700" /> Loading details…
+                </span>
+              </div>
             )}
           </Modal>
 
