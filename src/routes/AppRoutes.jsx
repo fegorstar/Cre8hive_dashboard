@@ -5,37 +5,36 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import Login from '../pages/auth/Login';
 import Dashboard from '../pages/dashboard/Dashboard';
 import Investments from '../pages/dashboard/Investments';
+import InvestmentDetails from '../pages/dashboard/InvestmentDetails'; // 👈 NEW
 import Reports from '../pages/dashboard/Reports';
 import ServiceCategories from '../pages/dashboard/ServiceCategories';
 import Creators from '../pages/dashboard/Creators';
 import Members from '../pages/dashboard/Members';
-import Disputes from '../pages/dashboard/Disputes'; // 👈 NEW
+import Disputes from '../pages/dashboard/Disputes'; // 👈 NEW (from your snippet)
 import Reviews from '../pages/dashboard/Reviews';
 import Settings from "../pages/dashboard/Settings";
 import Transactions from "../pages/dashboard/Transactions";
 import Profile from "../pages/dashboard/Profile";
 
-
 import useAuthStore from '../store/authStore';
 
 /**
  * ✅ IMPORTANT:
- * Select primitives only to avoid returning a fresh object each render.
+ * Use minimal selectors to avoid re-renders. Gate by token presence so
+ * hard-refresh (token in localStorage) still works.
  */
 const ProtectedRoute = ({ children }) => {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const token = useAuthStore((s) => s.token);
-
-  // Allow access if there's a token either in store or localStorage (handles refresh)
   const tokenFromStorage = token || localStorage.getItem('authToken');
   const allowed = Boolean(tokenFromStorage);
 
-  if (!allowed || !isAuthenticated) return <Navigate to="/" replace />;
+  if (!allowed) return <Navigate to="/" replace />;
   return children;
 };
 
 const router = createBrowserRouter([
   { path: '/', element: <Login /> },
+
   {
     path: '/dashboard',
     element: (
@@ -44,6 +43,8 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+
+  // Investments list
   {
     path: '/investments',
     element: (
@@ -52,6 +53,17 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+
+  // 👇 NEW: Investment details page (used by “View” action)
+  {
+    path: '/investments/:id',
+    element: (
+      <ProtectedRoute>
+        <InvestmentDetails />
+      </ProtectedRoute>
+    ),
+  },
+
   {
     path: '/reports',
     element: (
@@ -85,14 +97,13 @@ const router = createBrowserRouter([
     ),
   },
   {
-    path: '/disputes', // 👈 NEW
+    path: '/disputes',
     element: (
       <ProtectedRoute>
         <Disputes />
       </ProtectedRoute>
     ),
   },
-
   {
     path: '/reviews',
     element: (
@@ -102,23 +113,21 @@ const router = createBrowserRouter([
     ),
   },
   {
-    path: "/settings",
+    path: '/settings',
     element: (
       <ProtectedRoute>
         <Settings />
       </ProtectedRoute>
     ),
   },
-
   {
-    path: "/transactions",
+    path: '/transactions',
     element: (
       <ProtectedRoute>
         <Transactions />
       </ProtectedRoute>
     ),
   },
-
   {
     path: '/profile',
     element: (
@@ -127,6 +136,8 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+
+  // Optional catch-all:
   // { path: '*', element: <Navigate to="/dashboard" replace /> },
 ]);
 
