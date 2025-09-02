@@ -399,7 +399,7 @@ const useInvestmentsStore = create((set, get) => ({
         const investorCount = list.reduce((sum, r) => sum + (Number(r.active_investors) || 0), 0);
         return { vests: list, meta, summary: { totalMinValue, curatedCount, investorCount, activeCount, closedCount } };
       });
-      return { message: "Deleted" };
+      return { message: "VestDeleted Successfully" };
     } catch (err) {
       console.error("deleteVest:", err);
       throw new Error(getErrorMessage(err, "Failed to delete investment."));

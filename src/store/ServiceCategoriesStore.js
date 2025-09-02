@@ -6,6 +6,9 @@
 // ✅ Handles Laravel paginator { data: { data: [...] } } and wrapper {status, data:{data:[...]}} patterns
 // ✅ Clear error messages from { message, errors }
 // ✅ Parents-only in categories; subcategories kept separately
+// ✅ ADDED: Robust pagination meta (currentPage, lastPage, from, to, total, perPage, links)
+// ✅ ADDED: page-aware fetchers without breaking your old call signatures
+// ✅ ADDED: refresh after CRUD stays on current page
 
 import { create } from "zustand";
 import api from "../lib/apiClient";
@@ -32,6 +35,44 @@ const extractArray = (res) => {
   if (Array.isArray(d?.data?.data)) return d.data.data;  // { data: { data: [...] } } (Laravel paginator)
   if (Array.isArray(d?.result)) return d.result;         // { result: [...] }
   return [];
+};
+
+// Extract pagination meta from Laravel-style payload
+const extractMeta = (res) => {
+  const root = res?.data || {};
+  // meta may live in data.* (Laravel paginator) or at root (some custom APIs)
+  const box =
+    root?.data && !Array.isArray(root.data) && (root.data.current_page || root.data.last_page)
+      ? root.data
+      : root;
+
+  const currentPage = Number(box?.current_page) || 1;
+  const lastPage = Number(box?.last_page) || 1;
+  const perPage = Number(box?.per_page) || 10;
+  const total = Number(box?.total) || 0;
+
+  let from = Number(box?.from);
+  let to = Number(box?.to);
+
+  // Fallback calc if server didn’t send from/to
+  if (!Number.isFinite(from)) from = total ? (currentPage - 1) * perPage + 1 : 0;
+  if (!Number.isFinite(to)) {
+    const arrLen = extractArray(res).length;
+    to = total ? Math.min(from + arrLen - 1, total) : 0;
+  }
+
+  return {
+    currentPage,
+    lastPage,
+    perPage,
+    total,
+    from,
+    to,
+    nextPageUrl: box?.next_page_url || null,
+    prevPageUrl: box?.prev_page_url || null,
+    path: box?.path || "",
+    links: Array.isArray(box?.links) ? box.links : [],
+  };
 };
 
 // Unified human-friendly error
@@ -91,25 +132,55 @@ const decorateSubcategory = (raw = {}, parentName) => ({
 /* ================== STORE ================== */
 
 const useServiceCategoriesStore = create((set, get) => ({
-  // parents list (UI)
+  // Parents list (UI, current page items)
   categories: JSON.parse(localStorage.getItem("categories") || "[]"),
 
-  // ALL subcategories (we filter client-side for reliability)
+  // ALL subcategories (kept as current page items; server pagination is source of truth)
   subCategories: JSON.parse(localStorage.getItem("subCategories") || "[]"),
+
+  // Pagination meta (NEW)
+  categoriesMeta: {
+    currentPage: 1,
+    lastPage: 1,
+    perPage: 10,
+    total: 0,
+    from: 0,
+    to: 0,
+    links: [],
+  },
+  subCategoriesMeta: {
+    currentPage: 1,
+    lastPage: 1,
+    perPage: 10,
+    total: 0,
+    from: 0,
+    to: 0,
+    links: [],
+  },
 
   loading: false,
   error: null,
 
   /* --------- FETCH: categories (parents) --------- */
-  fetchCategories: async () => {
+  // NEW: accepts options object { page?: number }
+  // Old calls (no args) still work and default to page=1
+  fetchCategories: async (options = undefined) => {
+    const page = typeof options === "object" && options?.page ? Number(options.page) : 1;
+
     set({ loading: true, error: null });
     try {
-      // ✅ Correct endpoint; payload is {status, data:{data:[...]}}
-      const res = await api.get(`/admin/category`);
+      // ✅ Correct endpoint; payload is {status, data:{data:[...], current_page, last_page,...}}
+      const res = await api.get(`/admin/category`, { params: { page } });
+
       const raw = extractArray(res);
       const data = raw.map(decorateCategory);
+      const meta = extractMeta(res);
 
-      set({ categories: data, loading: false });
+      set({
+        categories: data,
+        categoriesMeta: meta,
+        loading: false,
+      });
       localStorage.setItem("categories", JSON.stringify(data));
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -122,28 +193,38 @@ const useServiceCategoriesStore = create((set, get) => ({
     }
   },
 
-  /* --------- FETCH: subcategories (ALL; filter done client-side) --------- */
-  // We still try to pass category_id to server, but always keep a full list locally
-  fetchSubCategories: async (parentId = null) => {
+  /* --------- FETCH: subcategories (server-paginated) --------- */
+  // Backwards compatible:
+  //   fetchSubCategories()                    -> page=1
+  //   fetchSubCategories(5)                   -> parentId=5, page=1
+  //   fetchSubCategories({ parentId: 5 })     -> page=1
+  //   fetchSubCategories({ page: 2 })         -> parentId=null, page=2
+  //   fetchSubCategories({ parentId: 5, page: 2 })
+  fetchSubCategories: async (arg = undefined) => {
+    let parentId = null;
+    let page = 1;
+
+    if (typeof arg === "number") {
+      parentId = arg;
+    } else if (typeof arg === "object" && arg !== null) {
+      if (arg.parentId !== undefined) parentId = arg.parentId;
+      if (arg.page !== undefined) page = Number(arg.page);
+    }
+
     set({ loading: true, error: null });
     try {
-      const params = {};
+      const params = { page };
       if (parentId !== null && parentId !== undefined) {
         const cid = toInt(parentId);
         if (!Number.isNaN(cid)) params.category_id = cid;
       }
 
-      // ✅ Correct endpoint; payload is {status, data:{data:[...]}}
-      let res;
-      try {
-        res = await api.get(`/admin/sub-category`, { params });
-      } catch (e) {
-        // fallback in case of temporary variant
-        res = await api.get(`/admin/sub-category`, { params: {} });
-      }
+      // ✅ Correct endpoint; payload is {status, data:{data:[...], current_page,...}}
+      const res = await api.get(`/admin/sub-category`, { params });
 
       const raw = extractArray(res);
 
+      // Map categoryId -> name for display
       const cats = get().categories || [];
       const catsMap = new Map(cats.map((c) => [Number(c.id), c.name]));
 
@@ -151,8 +232,13 @@ const useServiceCategoriesStore = create((set, get) => ({
         decorateSubcategory(s, catsMap.get(Number(s.category_id)))
       );
 
-      // Always store the full set; UI will filter before paginating
-      set({ subCategories: list, loading: false });
+      const meta = extractMeta(res);
+
+      set({
+        subCategories: list,
+        subCategoriesMeta: meta,
+        loading: false,
+      });
       localStorage.setItem("subCategories", JSON.stringify(list));
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -173,7 +259,10 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { category_name: (name || "").trim() };
       await api.post(`/admin/category/create`, payload);
 
-      await get().fetchCategories();
+      // Stay on current page after create
+      const cur = get().categoriesMeta.currentPage || 1;
+      await get().fetchCategories({ page: cur });
+
       set({ loading: false });
       return { message: "Category created successfully" };
     } catch (err) {
@@ -194,7 +283,9 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { category_name: (name || "").trim() };
       await api.put(`/admin/category/${id}`, payload);
 
-      await get().fetchCategories();
+      const cur = get().categoriesMeta.currentPage || 1;
+      await get().fetchCategories({ page: cur });
+
       set({ loading: false });
       return { message: "Category updated successfully" };
     } catch (err) {
@@ -214,7 +305,10 @@ const useServiceCategoriesStore = create((set, get) => ({
     try {
       await api.delete(`/admin/category/${id}`);
 
-      await get().fetchCategories();
+      const cur = get().categoriesMeta.currentPage || 1;
+      // If deleting last item of the last page, make sure we don't exceed lastPage afterward
+      await get().fetchCategories({ page: cur });
+
       set({ loading: false });
       return { message: "Category deleted successfully" };
     } catch (err) {
@@ -240,8 +334,9 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { name: cleanName, category_id };
       await api.post(`/admin/sub-category/create`, payload);
 
-      // Refresh full list; UI applies current filter
-      await get().fetchSubCategories(null);
+      const cur = get().subCategoriesMeta.currentPage || 1;
+      await get().fetchSubCategories({ page: cur, parentId: null }); // keep same page
+
       set({ loading: false });
       return { message: "Subcategory created successfully" };
     } catch (err) {
@@ -265,8 +360,9 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { name: cleanName, category_id };
       await api.put(`/admin/sub-category/${id}`, payload);
 
-      // Refresh full list; UI applies current filter
-      await get().fetchSubCategories(null);
+      const cur = get().subCategoriesMeta.currentPage || 1;
+      await get().fetchSubCategories({ page: cur, parentId: null });
+
       set({ loading: false });
       return { message: "Subcategory updated successfully" };
     } catch (err) {
@@ -286,8 +382,9 @@ const useServiceCategoriesStore = create((set, get) => ({
     try {
       await api.delete(`/admin/sub-category/${id}`);
 
-      // Refresh full list; UI applies current filter
-      await get().fetchSubCategories(null);
+      const cur = get().subCategoriesMeta.currentPage || 1;
+      await get().fetchSubCategories({ page: cur, parentId: null });
+
       set({ loading: false });
       return { message: "Subcategory deleted successfully" };
     } catch (err) {

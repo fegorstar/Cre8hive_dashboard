@@ -3,6 +3,12 @@
 //  - Table always renders
 //  - When there are NO rows: show a single "Loading…" row (no overlay)
 //  - When there ARE rows and we're reloading: show centered overlay spinner (no fade)
+//
+// UPDATED:
+//  - Uses server-side pagination from store meta (categoriesMeta, subCategoriesMeta).
+//  - Subcategory filter sends category_id to backend (server paginates correctly).
+//  - Prev/Next fetches new pages with current filter retained.
+//  - After create/update/delete, refresh stays on current page & filter.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -336,6 +342,9 @@ const SubcategoriesTable = ({
 const useServiceCategoriesStoreActions = () => {
   const categories = useServiceCategoriesStore((s) => s.categories);
   const subCategories = useServiceCategoriesStore((s) => s.subCategories);
+  const categoriesMeta = useServiceCategoriesStore((s) => s.categoriesMeta);
+  const subCategoriesMeta = useServiceCategoriesStore((s) => s.subCategoriesMeta);
+
   const fetchCategories = useServiceCategoriesStore((s) => s.fetchCategories);
   const fetchSubCategories = useServiceCategoriesStore((s) => s.fetchSubCategories);
   const createCategory = useServiceCategoriesStore((s) => s.createCategory);
@@ -344,9 +353,12 @@ const useServiceCategoriesStoreActions = () => {
   const updateSubCategory = useServiceCategoriesStore((s) => s.updateSubCategory);
   const deleteCategory = useServiceCategoriesStore((s) => s.deleteCategory);
   const deleteSubCategory = useServiceCategoriesStore((s) => s.deleteSubCategory);
+
   return {
     categories,
     subCategories,
+    categoriesMeta,
+    subCategoriesMeta,
     fetchCategories,
     fetchSubCategories,
     createCategory,
@@ -369,6 +381,8 @@ const ServiceCategories = () => {
   const {
     categories,
     subCategories,
+    categoriesMeta,
+    subCategoriesMeta,
     fetchCategories,
     fetchSubCategories,
     createCategory,
@@ -392,21 +406,24 @@ const ServiceCategories = () => {
   const [catsLoading, setCatsLoading] = useState(false);
   const [subsLoading, setSubsLoading] = useState(false);
 
-  const perPage = 10;
+  // Mirror current pages from meta (for footer display)
   const [catsPage, setCatsPage] = useState(1);
   const [subsPage, setSubsPage] = useState(1);
 
-  // Confirm dialog
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmBusy, setConfirmBusy] = useState(false);
-  const [confirmPayload, setConfirmPayload] = useState(null);
+  useEffect(() => {
+    setCatsPage(categoriesMeta?.currentPage || 1);
+  }, [categoriesMeta?.currentPage]);
 
-  // initial categories
+  useEffect(() => {
+    setSubsPage(subCategoriesMeta?.currentPage || 1);
+  }, [subCategoriesMeta?.currentPage]);
+
+  // initial categories (page 1)
   useEffect(() => {
     (async () => {
       try {
         setCatsLoading(true);
-        await fetchCategories();
+        await fetchCategories({ page: 1 });
       } catch (e) {
         toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load categories." });
       } finally {
@@ -415,59 +432,46 @@ const ServiceCategories = () => {
     })();
   }, [fetchCategories]); // eslint-disable-line
 
-  // load subcats on tab change
+  // load subcats on tab change (page 1, honor current filter)
   useEffect(() => {
     if (tab !== "subcategories") return;
     (async () => {
       try {
         setSubsLoading(true);
-        await fetchSubCategories(null); // fetch all; UI filters below
+        const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
+        await fetchSubCategories({ page: 1, parentId });
       } catch (e) {
         toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load subcategories." });
       } finally {
         setSubsLoading(false);
       }
     })();
-  }, [tab, fetchSubCategories]); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
-  /* ----- PAGING (Categories) ----- */
-  const parentRows = safeCategories;
-  const catsTotal = parentRows.length;
-  const catsTotalPages = Math.max(1, Math.ceil(catsTotal / perPage));
-  const catsStart = catsTotal === 0 ? 0 : (catsPage - 1) * perPage + 1;
-  const catsEnd = catsTotal === 0 ? 0 : Math.min(catsPage * perPage, catsTotal);
-  const catsVisible = useMemo(
-    () => parentRows.slice((catsPage - 1) * perPage, catsPage * perPage),
-    [parentRows, catsPage]
-  );
+  /* ----- REMOTE PAGINATION (Categories) ----- */
+  const catsTotal = categoriesMeta?.total || 0;
+  const catsTotalPages = categoriesMeta?.lastPage || 1;
+  const catsStart = categoriesMeta?.from || 0;
+  const catsEnd = categoriesMeta?.to || 0;
+  const catsVisible = categories; // already current page from server
 
-  /* ----- FILTER + PAGING (Subcategories) ----- */
-  const subRowsAll = Array.isArray(subCategories) ? subCategories : [];
-  const subRows = useMemo(() => {
-    if (subcatFilter === "ALL") return subRowsAll;
-    const cid = Number(subcatFilter);
-    return subRowsAll.filter(
-      (r) => Number(r.parentCategoryId ?? r.category_id) === cid
-    );
-  }, [subRowsAll, subcatFilter]);
-
-  const subsTotal = subRows.length;
-  const subsTotalPages = Math.max(1, Math.ceil(subsTotal / perPage));
-  const subsStart = subsTotal === 0 ? 0 : (subsPage - 1) * perPage + 1;
-  const subsEnd = subsTotal === 0 ? 0 : Math.min(subsPage * perPage, subsTotal);
-  const subsVisible = useMemo(
-    () => subRows.slice((subsPage - 1) * perPage, subsPage * perPage),
-    [subRows, subsPage]
-  );
+  /* ----- REMOTE PAGINATION (Subcategories + Filter) ----- */
+  const subsTotal = subCategoriesMeta?.total || 0;
+  const subsTotalPages = subCategoriesMeta?.lastPage || 1;
+  const subsStart = subCategoriesMeta?.from || 0;
+  const subsEnd = subCategoriesMeta?.to || 0;
+  const subsVisible = subCategories; // already current page from server
 
   const makeFooterLeft = (total, start, end) =>
     total === 0 ? "No records" : `Showing ${start}–${end} of ${total} record${total > 1 ? "s" : ""}`;
 
-  const makeFooterRight = (page, totalPages, setPage) => (
+  // Prev/Next footer that calls the server with page +/- 1
+  const makeFooterRight = ({ page, totalPages, onPrev, onNext }) => (
     <div className="flex items-center gap-2">
       <button
         disabled={page <= 1}
-        onClick={() => setPage((p) => Math.max(1, p - 1))}
+        onClick={onPrev}
         className={`px-3 py-1.5 rounded-lg border ${
           page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
         }`}
@@ -479,7 +483,7 @@ const ServiceCategories = () => {
       </span>
       <button
         disabled={page >= totalPages}
-        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+        onClick={onNext}
         className={`px-3 py-1.5 rounded-lg border ${
           page >= totalPages ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
         }`}
@@ -537,6 +541,11 @@ const ServiceCategories = () => {
     setConfirmOpen(true);
   };
 
+  // Confirm dialog
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmPayload, setConfirmPayload] = useState(null);
+
   // Confirm delete
   const handleConfirmDelete = async () => {
     if (!confirmPayload) return;
@@ -546,19 +555,24 @@ const ServiceCategories = () => {
       if (type === "category") {
         await deleteCategory(row.id);
         toast.add({ type: "success", title: "Deleted", message: "Category deleted successfully." });
+
         setCatsLoading(true);
-        await fetchCategories();
+        await fetchCategories({ page: catsPage || 1 });
         setCatsLoading(false);
+
         if (tab === "subcategories") {
           setSubsLoading(true);
-          await fetchSubCategories(null);
+          const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
+          await fetchSubCategories({ page: subsPage || 1, parentId });
           setSubsLoading(false);
         }
       } else {
         await deleteSubCategory(row.id);
         toast.add({ type: "success", title: "Deleted", message: "Subcategory deleted successfully." });
+
         setSubsLoading(true);
-        await fetchSubCategories(null);
+        const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
+        await fetchSubCategories({ page: subsPage || 1, parentId });
         setSubsLoading(false);
       }
       setConfirmOpen(false);
@@ -583,7 +597,8 @@ const ServiceCategories = () => {
           toast.add({ type: "success", title: "Created", message: "Subcategory created successfully." });
         }
         setSubsLoading(true);
-        await fetchSubCategories(null);
+        const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
+        await fetchSubCategories({ page: subsPage || 1, parentId });
         setSubsLoading(false);
       } else {
         if (modalMode === "edit" && modalRecord?.id) {
@@ -594,7 +609,7 @@ const ServiceCategories = () => {
           toast.add({ type: "success", title: "Created", message: "Category created successfully." });
         }
         setCatsLoading(true);
-        await fetchCategories();
+        await fetchCategories({ page: catsPage || 1 });
         setCatsLoading(false);
       }
       closeModal();
@@ -611,12 +626,56 @@ const ServiceCategories = () => {
     modalType === "category" ? "Category" : "Subcategory"
   }`;
 
-  /* ----- paging helpers ----- */
+  /* ----- footer builders ----- */
   const catsFooterLeft = makeFooterLeft(catsTotal, catsStart, catsEnd);
-  const catsFooterRight = makeFooterRight(catsPage, catsTotalPages, setCatsPage);
+  const catsFooterRight = makeFooterRight({
+    page: catsPage,
+    totalPages: catsTotalPages,
+    onPrev: async () => {
+      if (catsPage <= 1) return;
+      try {
+        setCatsLoading(true);
+        await fetchCategories({ page: catsPage - 1 });
+      } finally {
+        setCatsLoading(false);
+      }
+    },
+    onNext: async () => {
+      if (catsPage >= catsTotalPages) return;
+      try {
+        setCatsLoading(true);
+        await fetchCategories({ page: catsPage + 1 });
+      } finally {
+        setCatsLoading(false);
+      }
+    },
+  });
 
   const subsFooterLeft = makeFooterLeft(subsTotal, subsStart, subsEnd);
-  const subsFooterRight = makeFooterRight(subsPage, subsTotalPages, setSubsPage);
+  const subsFooterRight = makeFooterRight({
+    page: subsPage,
+    totalPages: subsTotalPages,
+    onPrev: async () => {
+      if (subsPage <= 1) return;
+      const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
+      try {
+        setSubsLoading(true);
+        await fetchSubCategories({ page: subsPage - 1, parentId });
+      } finally {
+        setSubsLoading(false);
+      }
+    },
+    onNext: async () => {
+      if (subsPage >= subsTotalPages) return;
+      const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
+      try {
+        setSubsLoading(true);
+        await fetchSubCategories({ page: subsPage + 1, parentId });
+      } finally {
+        setSubsLoading(false);
+      }
+    },
+  });
 
   return (
     <main>
@@ -669,9 +728,17 @@ const ServiceCategories = () => {
                 <label className="text-sm text-gray-700">Category filter</label>
                 <select
                   value={subcatFilter}
-                  onChange={(e) => {
+                  onChange={async (e) => {
+                    const next = e.target.value;
+                    setSubcatFilter(next);
                     setSubsPage(1);
-                    setSubcatFilter(e.target.value);
+                    const parentId = next === "ALL" ? null : Number(next);
+                    try {
+                      setSubsLoading(true);
+                      await fetchSubCategories({ page: 1, parentId });
+                    } finally {
+                      setSubsLoading(false);
+                    }
                   }}
                   className={`${selectBase} w-60`}
                 >
