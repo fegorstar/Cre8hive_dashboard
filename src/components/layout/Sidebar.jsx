@@ -17,6 +17,7 @@ import useAuthStore from '../../store/authStore';
 import useLayoutStore from '../../store/LayoutStore';
 
 const ACCENT = '#4D3490';
+const BRAND_RGB = 'rgb(77, 52, 144)';
 
 const Sidebar = (props) => {
   const location = useLocation();
@@ -26,6 +27,9 @@ const Sidebar = (props) => {
   const storeOpen = useLayoutStore((s) => s.sidebarOpen);
   const storeToggle = useLayoutStore((s) => s.toggleSidebar);
   const storeClose = useLayoutStore((s) => s.closeSidebar);
+
+  const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
+  const isBrand = uiTheme === 'brand';
 
   const isOpen =
     typeof props?.isOpen === 'boolean' ? props.isOpen : storeOpen;
@@ -73,18 +77,13 @@ const Sidebar = (props) => {
     if (isOpen) closeSidebar();
   }, [isOpen, closeSidebar]);
 
-  // NEW: document-level outside click (pointerdown) — guarantees close on any outside area
+  // document-level outside click (pointerdown)
   useEffect(() => {
     if (!isOpen) return;
-
     const onPointerDown = (e) => {
-      // ignore if the click is inside the drawer
       if (drawerRef.current && drawerRef.current.contains(e.target)) return;
-      // otherwise, close (mobile)
       closeSidebar();
     };
-
-    // use pointerdown for better mobile responsiveness
     document.addEventListener('pointerdown', onPointerDown, { capture: true });
     return () => document.removeEventListener('pointerdown', onPointerDown, { capture: true });
   }, [isOpen, closeSidebar]);
@@ -105,10 +104,31 @@ const Sidebar = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  // ---------- Nav item component with RIGHT-side active highlight ----------
+  // ---------- Nav item with RIGHT-side active highlight & theme-aware colors ----------
   const NavItem = ({ title, path, icon: Icon }) => {
     const active =
       location.pathname === path || location.pathname.startsWith(path + '/');
+
+    const base =
+      'flex items-center rounded-md text-base font-medium transition-colors px-4 py-3 pr-6';
+
+    const textCls = isBrand
+      ? active
+        ? 'text-white bg-white/20'
+        : 'text-white/90 hover:text-white hover:bg-white/10'
+      : active
+        ? 'bg-violet-50 text-[#4D3490]'
+        : 'text-[#667085] hover:bg-violet-50 hover:text-[#4D3490]';
+
+    const iconCls = isBrand
+      ? active
+        ? 'text-white'
+        : 'text-white/90 group-hover:text-white'
+      : active
+        ? 'text-[#4D3490]'
+        : 'text-[#667085] group-hover:text-[#4D3490]';
+
+    const barColor = isBrand ? 'rgba(255,255,255,0.9)' : ACCENT;
 
     return (
       <li className="group relative">
@@ -116,22 +136,9 @@ const Sidebar = (props) => {
           to={path}
           aria-current={active ? 'page' : undefined}
           onClick={handleLinkClick}
-          className={[
-            'flex items-center rounded-md text-base font-medium transition-colors',
-            'px-4 py-3 pr-6', // extra right padding so the right highlight doesn't overlap text
-            active
-              ? 'bg-violet-50 text-[#4D3490]'
-              : 'text-[#667085] hover:bg-violet-50 hover:text-[#4D3490]',
-          ].join(' ')}
+          className={[base, textCls].join(' ')}
         >
-          {Icon ? (
-            <Icon
-              className={[
-                'mr-3 h-5 w-5 transition-colors',
-                active ? 'text-[#4D3490]' : 'text-[#667085] group-hover:text-[#4D3490]',
-              ].join(' ')}
-            />
-          ) : null}
+          {Icon ? <Icon className={['mr-3 h-5 w-5 transition-colors', iconCls].join(' ')} /> : null}
           <span>{title}</span>
 
           {/* Right-side highlighter for ACTIVE state */}
@@ -140,14 +147,23 @@ const Sidebar = (props) => {
               aria-hidden="true"
               className="absolute right-0 top-1.5 bottom-1.5 w-1.5 rounded-l-full"
               style={{
-                background: ACCENT,
-                boxShadow: '0 0 0 2px rgba(77,52,144,0.12)', // subtle glow
+                background: barColor,
+                boxShadow: isBrand
+                  ? '0 0 0 2px rgba(255,255,255,0.18)'
+                  : '0 0 0 2px rgba(77,52,144,0.12)',
               }}
             />
           )}
         </Link>
       </li>
     );
+  };
+
+  // Shared container styles for asides
+  const asideStyle = {
+    backgroundColor: isBrand ? BRAND_RGB : '#ffffff',
+    borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#E5E7EB',
+    color: isBrand ? '#ffffff' : '#111827',
   };
 
   return (
@@ -166,31 +182,43 @@ const Sidebar = (props) => {
         ref={drawerRef}
         id="mobile-sidebar"
         className={[
-          'fixed left-0 top-0 h-full w-[82vw] max-w-[18rem] bg-white border-r border-gray-200 z-50 shadow-xl',
+          'fixed left-0 top-0 h-full w-[82vw] max-w-[18rem] border-r z-50 shadow-xl',
           'transition-transform duration-200 lg:hidden',
           isOpen ? 'translate-x-0' : '-translate-x-full',
         ].join(' ')}
+        style={asideStyle}
         role="dialog"
         aria-modal="true"
         aria-label="Mobile Sidebar"
         tabIndex={-1}
       >
-        {/* Drawer header with close button */}
-        <div className="flex items-center justify-between px-5 py-4 border-b">
+        {/* Drawer header */}
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b"
+          style={{ borderColor: asideStyle.borderColor }}
+        >
           <Link to={user ? '/dashboard' : '/'} className="navbar-brand" onClick={handleLinkClick}>
-            <img src="/assets/images/logo-dash.png" alt="Logo" className="h-6 w-auto" />
+            <img
+              src="/assets/images/logo-dash.png"
+              alt="Logo"
+              className="h-6 w-auto"
+              // style={{ filter: isBrand ? 'brightness(0) invert(1)' : 'none' }}
+            />
           </Link>
           <button
             type="button"
             onClick={closeSidebar}
-            className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-300"
+            className={[
+              'inline-flex items-center justify-center w-9 h-9 rounded-md border',
+              isBrand ? 'border-white/25 hover:bg-white/10 text-white' : 'border-gray-300 hover:bg-gray-100 text-gray-700',
+            ].join(' ')}
             aria-label="Close menu"
           >
             <FiX size={18} />
           </button>
         </div>
 
-        {/* Drawer body (extra top padding for roomy, modern feel) */}
+        {/* Drawer body */}
         <div className="h-[calc(100%-56px)] overflow-y-auto pt-6 pb-4">
           <ul className="flex flex-col space-y-1 px-3">
             {menuItems.map((item) => (
@@ -200,20 +228,29 @@ const Sidebar = (props) => {
         </div>
       </aside>
 
-      {/* Desktop sidebar (always visible) */}
+      {/* Desktop sidebar */}
       <aside
-        className="hidden lg:flex fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 z-20"
+        className="hidden lg:flex fixed left-0 top-0 h-full w-64 border-r z-20"
+        style={asideStyle}
         aria-label="Sidebar"
       >
         <div className="h-full flex flex-col w-full">
-          {/* Extra top padding per your request */}
-          <div className="flex items-center justify-center pt-6 pb-3 border-b">
+          {/* Logo header */}
+          <div
+            className="flex items-center justify-center pt-6 pb-3 border-b"
+            style={{ borderColor: asideStyle.borderColor }}
+          >
             <Link to={user ? '/dashboard' : '/'} className="navbar-brand">
-              <img src="/assets/images/logo-dash.png" alt="Logo" className="w-32 h-auto" />
+              <img
+                src="/assets/images/logo-dash.png"
+                alt="Logo"
+                className="w-32 h-auto"
+                // style={{ filter: isBrand ? 'brightness(0) invert(1)' : 'none' }}
+              />
             </Link>
           </div>
 
-          {/* MAIN NAV — extra top padding & right-edge active highlight */}
+          {/* MAIN NAV */}
           <ul className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4">
             {menuItems.map((item) => (
               <NavItem key={item.path} {...item} />

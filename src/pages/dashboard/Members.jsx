@@ -1,11 +1,13 @@
 // src/pages/dashboard/Members.jsx
-// Summary cards are stable (use store.counts from an unfiltered fetch)
-// Table uses single-loader UX (like Creators):
-//  - Table always renders
-//  - If no rows: show a single "Loading…" row or "No members yet."
-//  - If rows exist and loading: show centered overlay spinner
-// Edit modal opens instantly and hydrates fields once data arrives.
-// Edit form matches POST /admin/user/:userId schema (no status field).
+// Summary cards now follow counts payload:
+//  - total_users
+//  - total_creators
+//  - total_non_creators
+//  - verified_creators
+//  - unverified_creators
+// Plus 2 derived KPIs:
+//  - Creators Verification Rate
+//  - Creators Share of Users
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -444,7 +446,7 @@ const Members = () => {
 
   // Initial unfiltered fetch to seed table + GLOBAL counts
   useEffect(() => {
-    fetchMembers?.({ page: 1, per_page: perPage, q: "", role: "" }); // this one updates counts
+    fetchMembers?.({ page: 1, per_page: perPage, q: "", role: "" }); // updates counts
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -470,15 +472,22 @@ const Members = () => {
 
   const allRows = useMemo(() => (Array.isArray(members) ? members : []), [members]);
 
-  // STABLE summary metrics from counts (fall back gently if missing)
-  const totalUsers =
-    counts?.total_users ?? counts?.total ?? counts?.users ?? pagination?.total ?? 0;
-  const totalCreators =
-    counts?.total_creators ?? counts?.creators ?? counts?.by_role?.CREATOR ?? 0;
-  const verifiedEmails =
-    counts?.verified_emails ?? counts?.verified ?? 0;
-  const activeUsers =
-    counts?.active_users ?? counts?.active ?? 0;
+  // Summary metrics (robust to missing keys)
+  const totalUsers = Number(
+    counts?.total_users ?? counts?.total ?? counts?.users ?? pagination?.total ?? 0
+  );
+  const totalCreators = Number(
+    counts?.total_creators ?? counts?.creators ?? counts?.by_role?.CREATOR ?? 0
+  );
+  const totalNonCreators = Number(counts?.total_non_creators ?? 0);
+  const verifiedCreators = Number(counts?.verified_creators ?? 0);
+  const unverifiedCreators = Number(counts?.unverified_creators ?? 0);
+
+  const creatorsVerificationRate =
+    totalCreators > 0 ? Math.round((verifiedCreators / totalCreators) * 100) : 0;
+
+  const creatorsShareOfUsers =
+    totalUsers > 0 ? Math.round((totalCreators / totalUsers) * 100) : 0;
 
   // Modal open instantly; then hydrate with GET /admin/user/:id and merge
   const merge = (a, b) => ({ ...(a || {}), ...(b || {}) });
@@ -518,7 +527,6 @@ const Members = () => {
       await fetchMembers?.({ page, per_page: perPage, q, role });
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Status change failed." });
-      // eslint-disable-next-line no-console
       console.error(e);
     } finally {
       setTogglingId(null);
@@ -535,7 +543,6 @@ const Members = () => {
       closeModal();
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Update failed." });
-      // eslint-disable-next-line no-console
       console.error(e);
     } finally {
       setSubmitting(false);
@@ -571,23 +578,48 @@ const Members = () => {
               <p className="inline-block px-6 text-base md:text-lg leading-5 font-semibold">Users</p>
             </div>
 
-            {/* Summary cards (stable via counts) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            {/* Summary cards (from counts + derived KPIs) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-4 mb-4">
+              {/* Total Users */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Total Users</div>
-                <div className="text-2xl font-semibold">{Number(totalUsers || 0).toLocaleString()}</div>
+                <div className="text-xs text-gray-600 mb-1">Total Users</div>
+                <div className="text-2xl font-semibold">{totalUsers.toLocaleString()}</div>
               </div>
+
+              {/* Total Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Total Creators</div>
-                <div className="text-2xl font-semibold">{Number(totalCreators || 0).toLocaleString()}</div>
+                <div className="text-xs text-gray-600 mb-1">Total Creators</div>
+                <div className="text-2xl font-semibold">{totalCreators.toLocaleString()}</div>
               </div>
+
+              {/* Non-Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Verified Emails</div>
-                <div className="text-2xl font-semibold">{Number(verifiedEmails || 0).toLocaleString()}</div>
+                <div className="text-xs text-gray-600 mb-1">Total Non-Creators</div>
+                <div className="text-2xl font-semibold">{totalNonCreators.toLocaleString()}</div>
               </div>
+
+              {/* Verified Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
-                <div className="text-xs text-gray-600 mb-2">Active Users</div>
-                <div className="text-2xl font-semibold">{Number(activeUsers || 0).toLocaleString()}</div>
+                <div className="text-xs text-gray-600 mb-1">Verified Creators</div>
+                <div className="text-2xl font-semibold">{verifiedCreators.toLocaleString()}</div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  {totalCreators > 0 ? `${creatorsVerificationRate}% of creators` : "—"}
+                </div>
+              </div>
+
+              {/* Unverified Creators */}
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
+                <div className="text-xs text-gray-600 mb-1">Unverified Creators</div>
+                <div className="text-2xl font-semibold">{unverifiedCreators.toLocaleString()}</div>
+              </div>
+
+              {/* Creators share of users */}
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
+                <div className="text-xs text-gray-600 mb-1">Creators Share of Users</div>
+                <div className="text-2xl font-semibold">{creatorsShareOfUsers}%</div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  {totalUsers > 0 ? `${totalCreators.toLocaleString()} / ${totalUsers.toLocaleString()}` : "—"}
+                </div>
               </div>
             </div>
 

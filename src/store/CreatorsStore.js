@@ -5,14 +5,22 @@
 //   SINGLE: GET {BASE_URL}/admin/user/creators/:id
 //   UPDATE: POST {BASE_URL}/admin/user/creators/update/:id
 //   STATUS: POST {BASE_URL}/admin/user/creators/status/:id  (body: { active: true|false })
+//
+//   SERVICES:
+//     LIST:   GET {BASE_URL}/admin/services?page=1
+//             (server returns: { status, message, data: { current_page, data: [...], ... } })
+//             Optional params we send if available: page, per_page, status, user_id
+//     UPDATE: PUT {BASE_URL}/admin/services/:serviceId  (body: { status: "PUBLISHED" | "PENDING" | "REJECTED" })
+//
 // Notes:
-//   - This store now posts ONLY creator fields for updates (no nested user).
+//   - This store posts ONLY creator fields for updates (no nested user).
+//   - Includes services fetching & status updates with per-creator caches.
 
 import { create } from 'zustand';
 import axios from 'axios';
 import { BASE_URL } from '../config';
 
-const api = axios.create({ baseURL: BASE_URL });
+const api = axios.create({ baseURL: String(BASE_URL || '').replace(/\/$/, '') });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken');
@@ -51,20 +59,17 @@ const extractArray = (res) => {
   if (Array.isArray(res?.data)) return res.data;
   if (Array.isArray(res?.data?.data)) return res.data.data;
   if (Array.isArray(res?.data?.result)) return res.data.result;
-  if (Array.isArray(res?.data?.data?.data)) return res.data.data.data;
+  if (Array.isArray(res?.data?.data?.data)) return res.data.data.data; // Laravel paginator nested
   return [];
 };
 
 const extractObject = (res) => {
-  // Prefer { data: {...} }
   if (res?.data?.data && !Array.isArray(res.data.data) && typeof res.data.data === 'object') {
     return res.data.data;
   }
-  // Fallback to { ... } at root .data
   if (res?.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
     return res.data;
   }
-  // Last chance: first element of any array envelope
   const arr = extractArray(res);
   return arr.length ? arr[0] : null;
 };
@@ -74,20 +79,13 @@ const normalizeIds = (it = {}) => ({
   id: it?.id !== undefined ? Number(it.id) : it?.id,
 });
 
-/**
- * Decorate a record that may be:
- *  - "creator" with nested "user" (your payload)
- *  - "user" with nested "creator" (other backends)
- *  - flat user/creator
- */
+/** Decorate creator/user record */
 const decorateCreator = (raw = {}) => {
   const norm = normalizeIds(raw);
 
-  // Try to detect both directions
   const user = norm.user && typeof norm.user === 'object' ? normalizeIds(norm.user) : {};
-  const creator = norm.creator && typeof norm.creator === 'object' ? normalizeIds(norm.creator) : norm; // top-level is creator in your payload
+  const creator = norm.creator && typeof norm.creator === 'object' ? normalizeIds(norm.creator) : norm;
 
-  // Name (read-only in this page)
   const fullName =
     norm.name ||
     `${norm.first_name ?? ''} ${norm.last_name ?? ''}`.trim() ||
@@ -95,7 +93,6 @@ const decorateCreator = (raw = {}) => {
     user.surname ||
     undefined;
 
-  // Contact
   const email = norm.email || user.email || creator.email;
   const phone =
     norm.phone_number ||
@@ -106,16 +103,11 @@ const decorateCreator = (raw = {}) => {
     creator.phone ||
     undefined;
 
-  // Attributes
-  const gender = (norm.gender ?? user.gender ?? creator.gender ?? '')
-    ?.toString()
-    ?.toLowerCase() || undefined;
+  const gender = (norm.gender ?? user.gender ?? creator.gender ?? '')?.toString()?.toLowerCase() || undefined;
   const nin = norm.nin ?? user.nin ?? creator.nin ?? undefined;
   const bvn = norm.bvn ?? user.bvn ?? creator.bvn ?? undefined;
 
-  // Status
-  const activeFlag =
-    norm.active ?? creator.active ?? user.active ?? (toNormStatus(norm.status) === 'active');
+  const activeFlag = norm.active ?? creator.active ?? user.active ?? (toNormStatus(norm.status) === 'active');
 
   return {
     ...norm,
@@ -136,6 +128,39 @@ const decorateCreator = (raw = {}) => {
   };
 };
 
+// ---- Services decoration ----
+const decorateService = (raw = {}) => {
+  const user = raw.user && typeof raw.user === 'object' ? normalizeIds(raw.user) : undefined;
+  const creatorName =
+    (user && `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim()) ||
+    user?.surname ||
+    undefined;
+
+  return {
+    id: Number(raw.id),
+    user_id: raw.user_id !== undefined && raw.user_id !== null ? Number(raw.user_id) : undefined,
+    service_name: raw.service_name ?? raw.name ?? '',
+    category_id:
+      raw.category_id !== undefined && raw.category_id !== null ? Number(raw.category_id) : undefined,
+    sub_category_id:
+      raw.sub_category_id !== undefined && raw.sub_category_id !== null
+        ? Number(raw.sub_category_id)
+        : undefined,
+    rate: raw.rate ?? '',
+    cover_image: raw.cover_image ?? '',
+    link: raw.link ?? '',
+    service_image: raw.service_image ?? '',
+    service_audio: raw.service_audio ?? '',
+    status: String(raw.status || '').toUpperCase() || 'PENDING', // PUBLISHED | PENDING | REJECTED
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
+    createdAtReadable: formatReadableDate(raw.created_at),
+    updatedAtReadable: formatReadableDate(raw.updated_at),
+    user, // nested user (if present)
+    creatorName,
+  };
+};
+
 // Helper: strip undefined keys before sending
 const pruneUndefined = (obj = {}) => {
   const copy = { ...obj };
@@ -151,6 +176,30 @@ const defaultPagination = JSON.parse(
   localStorage.getItem('creators_pagination') || '{"page":1,"per_page":10,"total":0}'
 );
 
+// Services cache
+const defaultServices = JSON.parse(localStorage.getItem('services_all') || '[]');
+const defaultServicesMeta = JSON.parse(
+  localStorage.getItem('services_meta') ||
+    '{"currentPage":1,"lastPage":1,"perPage":10,"total":0,"from":0,"to":0}'
+);
+const defaultServicesByUser = JSON.parse(localStorage.getItem('services_by_user') || '{}');
+const defaultServicesMetaByUser = JSON.parse(
+  localStorage.getItem('services_meta_by_user') || '{}'
+);
+
+const extractPaginatorMeta = (box = {}, fallback = {}) => ({
+  currentPage: Number(box?.current_page ?? fallback.currentPage ?? 1),
+  lastPage: Number(box?.last_page ?? fallback.lastPage ?? 1),
+  perPage: Number(box?.per_page ?? fallback.perPage ?? 10),
+  total: Number(box?.total ?? fallback.total ?? 0),
+  from: Number(box?.from ?? fallback.from ?? 0),
+  to: Number(box?.to ?? fallback.to ?? 0),
+  nextPageUrl: box?.next_page_url || null,
+  prevPageUrl: box?.prev_page_url || null,
+  path: box?.path || '',
+  links: Array.isArray(box?.links) ? box.links : [],
+});
+
 const useCreatorsStore = create((set, get) => ({
   creators: defaultCached,
   pagination: defaultPagination,
@@ -159,12 +208,19 @@ const useCreatorsStore = create((set, get) => ({
 
   currentCreator: null,
 
+  // ======== SERVICES STATE ========
+  services: defaultServices, // last general fetch
+  servicesMeta: defaultServicesMeta,
+  servicesByUser: defaultServicesByUser, // { [userId]: Service[] }
+  servicesMetaByUser: defaultServicesMetaByUser, // { [userId]: Meta }
+  loadingServices: false,
+
+  // ======== CREATORS ========
   fetchCreators: async (params = {}) => {
     set({ loading: true, error: null });
     try {
       const { page = 1, per_page = 10, q = '', status = '' } = params;
 
-      // Map UI 'status' to API 'active' boolean
       let active;
       if (status === 'active') active = true;
       else if (status === 'inactive') active = false;
@@ -271,14 +327,10 @@ const useCreatorsStore = create((set, get) => ({
     }
   },
 
-  /**
-   * Update (admin) — CREATOR FIELDS ONLY
-   * POST /api/admin/user/creators/update/:id
-   */
+  // Update creator (fields only)
   updateCreator: async (id, updatedData) => {
     set({ loading: true, error: null });
     try {
-      // Only send creator fields; strip undefineds
       const body = pruneUndefined(updatedData || {});
       const res = await api.post(`/admin/user/creators/update/${id}`, body);
 
@@ -310,24 +362,19 @@ const useCreatorsStore = create((set, get) => ({
     }
   },
 
-  /**
-   * Toggle / Update status (admin)
-   * POST /api/admin/user/creators/status/:id
-   * body: { active: true | false }
-   */
+  // Toggle status
   toggleCreatorStatus: async (id) => {
-    set({ error: null }); // don't block the table's global loader
+    set({ error: null });
     try {
       const state = get();
       const current =
         state.creators.find((c) => Number(c.id) === Number(id)) || state.currentCreator;
       const currentStatus = toNormStatus(current?.status);
-      const nextActive = currentStatus !== 'active'; // invert
+      const nextActive = currentStatus !== 'active';
 
       await api.post(`/admin/user/creators/status/${id}`, { active: nextActive });
 
       set((s) => {
-        // update list
         const creators = (s.creators || []).map((c) =>
           Number(c.id) === Number(id)
             ? { ...c, status: nextActive ? 'active' : 'inactive', active: nextActive }
@@ -335,7 +382,6 @@ const useCreatorsStore = create((set, get) => ({
         );
         localStorage.setItem('creators', JSON.stringify(creators));
 
-        // update current
         const currentCreator =
           Number(s.currentCreator?.id) === Number(id)
             ? { ...s.currentCreator, status: nextActive ? 'active' : 'inactive', active: nextActive }
@@ -348,6 +394,91 @@ const useCreatorsStore = create((set, get) => ({
       set({
         error: error?.response?.data?.message || error.message,
       });
+      throw new Error(error?.response?.data?.message || error.message);
+    }
+  },
+
+  // ======== SERVICES ========
+  fetchServices: async (params = {}) => {
+    const { page = 1, per_page = 10, status, user_id } = params || {};
+    const normalizedStatus = status ? String(status).toUpperCase() : undefined;
+
+    set({ loadingServices: true, error: null });
+    try {
+      const res = await api.get('/admin/services', {
+        params: pruneUndefined({
+          page,
+          per_page,
+          status: normalizedStatus,
+          user_id,
+        }),
+      });
+
+      const box = res?.data?.data || {};
+      const list = Array.isArray(box?.data) ? box.data : extractArray(res);
+      const decorated = list.map(decorateService);
+      const meta = extractPaginatorMeta(box, { currentPage: page, perPage: per_page });
+
+      set((s) => {
+        const next = { ...s };
+        next.services = decorated;
+        next.servicesMeta = meta;
+        localStorage.setItem('services_all', JSON.stringify(decorated));
+        localStorage.setItem('services_meta', JSON.stringify(meta));
+
+        if (user_id !== undefined && user_id !== null) {
+          const uid = Number(user_id);
+          const map = { ...(s.servicesByUser || {}) };
+          const metaMap = { ...(s.servicesMetaByUser || {}) };
+          map[uid] = decorated;
+          metaMap[uid] = meta;
+          next.servicesByUser = map;
+          next.servicesMetaByUser = metaMap;
+          localStorage.setItem('services_by_user', JSON.stringify(map));
+          localStorage.setItem('services_meta_by_user', JSON.stringify(metaMap));
+        }
+
+        return { ...next, loadingServices: false };
+      });
+
+      return { data: decorated, meta };
+    } catch (error) {
+      console.error('Error fetching services:', error);
+      set({ loadingServices: false, error: error?.response?.data?.message || error.message });
+      throw new Error(error?.response?.data?.message || error.message);
+    }
+  },
+
+  updateServiceStatus: async (serviceId, nextStatus) => {
+    const allowed = ['PUBLISHED', 'PENDING', 'REJECTED'];
+    const status = String(nextStatus || '').toUpperCase();
+    if (!allowed.includes(status)) {
+      throw new Error(`Invalid status "${nextStatus}". Use one of: ${allowed.join(', ')}`);
+    }
+
+    try {
+      await api.put(`/admin/services/${serviceId}`, { status });
+      const updatedAtReadable = formatReadableDate(new Date().toISOString());
+
+      set((s) => {
+        const patch = (svc) =>
+          Number(svc.id) === Number(serviceId) ? { ...svc, status, updatedAtReadable } : svc;
+
+        const services = (s.services || []).map(patch);
+        const servicesByUser = { ...(s.servicesByUser || {}) };
+        for (const uid of Object.keys(servicesByUser)) {
+          servicesByUser[uid] = (servicesByUser[uid] || []).map(patch);
+        }
+
+        localStorage.setItem('services_all', JSON.stringify(services));
+        localStorage.setItem('services_by_user', JSON.stringify(servicesByUser));
+
+        return { services, servicesByUser };
+      });
+
+      return { message: 'Service status updated Successfully' };
+    } catch (error) {
+      console.error('Error updating service status:', error);
       throw new Error(error?.response?.data?.message || error.message);
     }
   },

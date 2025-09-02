@@ -1,9 +1,11 @@
 // src/components/layout/Navbar.jsx
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiLogOut, FiBell, FiUser, FiMenu, FiX } from 'react-icons/fi';
+import { FiLogOut, FiBell, FiUser, FiMenu, FiX, FiSun, FiDroplet } from 'react-icons/fi';
 import useAuthStore from '../../store/authStore';
 import useLayoutStore from '../../store/LayoutStore';
+
+const BRAND_RGB = 'rgb(77, 52, 144)';
 
 const Navbar = (props) => {
   const navigate = useNavigate();
@@ -15,6 +17,11 @@ const Navbar = (props) => {
   // Layout store (fallback if props aren't passed)
   const storeSidebarOpen = useLayoutStore((s) => s.sidebarOpen);
   const storeToggleSidebar = useLayoutStore((s) => s.toggleSidebar);
+
+  // Theme state
+  const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
+  const toggleTheme = useLayoutStore((s) => s.toggleTheme);
+  const isBrand = uiTheme === 'brand';
 
   // Back-compat: support parent-managed sidebar if props were provided
   const isSidebarOpen =
@@ -34,14 +41,31 @@ const Navbar = (props) => {
     return `${(f[0] || 'N').toUpperCase()}${(l[0] || 'N').toUpperCase()}`;
   };
 
+  // Reusable styles for small round icon buttons on the right
+  const iconBtnClass = [
+    'inline-flex items-center justify-center w-10 h-10 rounded-md border transition',
+    isBrand ? 'border-white/25 hover:bg-white/10 text-white' : 'border-gray-300 hover:bg-gray-100 text-gray-700',
+  ].join(' ');
+
   return (
     <div className="header">
-      <nav className="bg-white px-6 py-[10px] flex items-center justify-between shadow-sm border-b border-gray-300 sticky top-0 z-30">
+      <nav
+        className="px-6 py-[10px] flex items-center justify-between shadow-sm border-b sticky top-0 z-30"
+        style={{
+          backgroundColor: isBrand ? BRAND_RGB : '#ffffff',
+          borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#D1D5DB',
+          color: isBrand ? '#ffffff' : '#111827',
+        }}
+      >
         {/* Mobile hamburger / X */}
         <button
           type="button"
           onClick={toggleSidebar}
-          className="lg:hidden inline-flex items-center justify-center w-10 h-10 rounded-md border border-gray-300"
+          className={[
+            'lg:hidden',
+            'inline-flex items-center justify-center w-10 h-10 rounded-md border',
+            isBrand ? 'border-white/25 hover:bg-white/10 text-white' : 'border-gray-300 hover:bg-gray-100 text-gray-700',
+          ].join(' ')}
           aria-label={isSidebarOpen ? 'Close menu' : 'Open menu'}
           aria-controls="mobile-sidebar"
           aria-expanded={!!isSidebarOpen}
@@ -52,7 +76,13 @@ const Navbar = (props) => {
         {/* Center (lg: left) - optional logo */}
         <div className="flex-1 flex justify-center lg:justify-start">
           <Link to="/dashboard" className="hidden lg:inline-block">
-            <img src="/assets/images/logo-dash.png" alt="Soundhive" className="h-6 w-auto" />
+            <img
+              src="/assets/images/logo-dash.png"
+              alt="Soundhive"
+              className="h-6 w-auto"
+              // If your logo is dark, you can uncomment the line below to make it visible on brand bg
+              // style={{ filter: isBrand ? 'brightness(0) invert(1)' : 'none' }}
+            />
           </Link>
         </div>
 
@@ -62,15 +92,18 @@ const Navbar = (props) => {
           <li className="dropdown stopevent mr-2">
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
             <a
-              className="text-gray-600"
+              className={isBrand ? 'text-white' : 'text-gray-600'}
               href="#"
               role="button"
               id="dropdownNotification"
               data-bs-toggle="dropdown"
               aria-haspopup="true"
               aria-expanded="false"
+              title="Notifications"
             >
-              <FiBell className="w-6 h-6" />
+              <span className={iconBtnClass}>
+                <FiBell className="w-5 h-5" />
+              </span>
             </a>
             <div
               className="dropdown-menu dropdown-menu-lg lg:left-auto lg:right-0"
@@ -93,6 +126,20 @@ const Navbar = (props) => {
             </div>
           </li>
 
+          {/* Theme switcher (right beside bell) */}
+          <li className="ml-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isBrand}
+              onClick={toggleTheme}
+              className={iconBtnClass}
+              title={isBrand ? 'Switch to Light' : 'Switch to Brand'}
+            >
+              {isBrand ? <FiSun className="w-5 h-5" /> : <FiDroplet className="w-5 h-5" />}
+            </button>
+          </li>
+
           {/* User */}
           <li className="dropdown ml-2">
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
@@ -113,17 +160,22 @@ const Navbar = (props) => {
                     className="rounded-full w-10 h-10 object-cover"
                   />
                 ) : (
-                  <div className="flex justify-center items-center w-10 h-10 rounded-full bg-gray-400 text-white">
+                  <div
+                    className={[
+                      'flex justify-center items-center w-10 h-10 rounded-full',
+                      isBrand ? 'bg-white/20 text-white' : 'bg-gray-400 text-white',
+                    ].join(' ')}
+                  >
                     {avatarInitials(user?.first_name, user?.last_name)}
                   </div>
                 )}
                 <div className="absolute border-gray-200 border-2 rounded-full right-0 bottom-0 bg-green-600 h-3 w-3" />
               </div>
               <div className="ml-2 flex flex-col">
-                <span className="text-gray-800 font-semibold">
+                <span className={['font-semibold', isBrand ? 'text-white' : 'text-gray-800'].join(' ')}>
                   {user?.first_name} {user?.last_name}
                 </span>
-                <span className="text-gray-500 text-sm">{user?.email}</span>
+                <span className={isBrand ? 'text-white/80 text-sm' : 'text-gray-500 text-sm'}>{user?.email}</span>
               </div>
             </a>
             <div className="dropdown-menu dropdown-menu-end p-2" aria-labelledby="dropdownUser">

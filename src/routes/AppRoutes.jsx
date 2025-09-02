@@ -5,12 +5,13 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import Login from '../pages/auth/Login';
 import Dashboard from '../pages/dashboard/Dashboard';
 import Investments from '../pages/dashboard/Investments';
-import InvestmentDetails from '../pages/dashboard/InvestmentDetails'; // 👈 NEW
+import InvestmentDetails from '../pages/dashboard/InvestmentDetails';
 import Reports from '../pages/dashboard/Reports';
 import ServiceCategories from '../pages/dashboard/ServiceCategories';
 import Creators from '../pages/dashboard/Creators';
+import CreatorDetails from '../pages/dashboard/CreatorDetails'; // 👈 NEW
 import Members from '../pages/dashboard/Members';
-import Disputes from '../pages/dashboard/Disputes'; // 👈 NEW (from your snippet)
+import Disputes from '../pages/dashboard/Disputes';
 import Reviews from '../pages/dashboard/Reviews';
 import Settings from "../pages/dashboard/Settings";
 import Transactions from "../pages/dashboard/Transactions";
@@ -54,7 +55,7 @@ const router = createBrowserRouter([
     ),
   },
 
-  // 👇 NEW: Investment details page (used by “View” action)
+  // Investment details
   {
     path: '/investments/:id',
     element: (
@@ -80,6 +81,8 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+
+  // Creators list
   {
     path: '/creators',
     element: (
@@ -88,6 +91,17 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     ),
   },
+
+  // 👇 NEW: Creator details page (opened by "View")
+  {
+    path: '/creators/:id',
+    element: (
+      <ProtectedRoute>
+        <CreatorDetails />
+      </ProtectedRoute>
+    ),
+  },
+
   {
     path: '/members',
     element: (

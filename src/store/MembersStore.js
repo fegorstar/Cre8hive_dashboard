@@ -4,11 +4,19 @@
 //  - SHOW:        GET {BASE_URL}/admin/user/{id}
 //  - UPDATE:      POST {BASE_URL}/admin/user/{id}        (payload: arbitrary fields e.g. { name, status })
 //  - TOGGLE:      POST {BASE_URL}/admin/user/status/{id} (body: { is_active: true|false })
+//
 // Notes:
 //  - Auth headers (Accept + Bearer)
 //  - Status normalization (1/0/true/false/strings) with tolerant derivation (status → active → creator.active → is_active)
 //  - Local cache for quick hydration
-//  - Stores `counts` from API for summary cards
+//  - Stores `counts` from API for summary cards. Example payload:
+//      counts: {
+//        total_users: 12,
+//        total_creators: 4,
+//        total_non_creators: 2,
+//        verified_creators: 0,
+//        unverified_creators: 4
+//      }
 
 import { create } from 'zustand';
 import axios from 'axios';
