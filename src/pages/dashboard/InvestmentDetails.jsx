@@ -161,7 +161,7 @@ const InvestmentDetails = () => {
       const updated = await updateVest(id, payload);
       setItem(updated);
       setDrawerOpen(false);
-      toast.add({ type: "success", title: "Updated", message: "Investment updated." });
+      toast.add({ type: "success", title: "Updated", message: "Investment updated Successfully." });
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Could not update investment." });
     } finally {

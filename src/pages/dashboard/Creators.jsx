@@ -622,7 +622,7 @@ const Creators = () => {
       };
 
       await updateCreator?.(editRec.id, creatorPayload);
-      toast.add({ type: "success", title: "Creator updated" });
+      toast.add({ type: "success", title: "Creator updated Successfully" });
 
       await fetchList({ page, per_page: perPage, q, status });
       setEditRec(null);

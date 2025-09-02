@@ -556,7 +556,7 @@ const CreatorDetails = () => {
       };
 
       await updateCreator?.(creator.id, creatorPayload);
-      toast.add({ type: "success", title: "Creator updated" });
+      toast.add({ type: "success", title: "Creator updated Successfully" });
       await fetchCreator?.(creator.id);
       setEditOpen(false);
     } catch (e) {

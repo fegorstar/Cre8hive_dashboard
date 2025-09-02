@@ -265,7 +265,7 @@ const Investments = () => {
         news: (form.news || []).filter((n) => String(n || "").trim()),
       };
       await createVest(payload);
-      toast.add({ type: "success", title: "Created", message: "Investment created." });
+      toast.add({ type: "success", title: "Created", message: "Investment created Successfully" });
       setDrawerOpen(false);
       await fetchVests(page);
     } catch (e) {
@@ -285,7 +285,7 @@ const Investments = () => {
     setConfirmBusy(true);
     try {
       await deleteVest(toDelete.id);
-      toast.add({ type: "success", title: "Deleted", message: "Investment removed." });
+      toast.add({ type: "success", title: "Deleted", message: "Investment removed Successfully." });
       setConfirmOpen(false);
       setToDelete(null);
       await fetchVests(page);

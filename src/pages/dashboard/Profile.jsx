@@ -33,7 +33,7 @@ const Profile = () => {
   const onSave = async () => {
     try {
       await updateMe({ first_name: firstName, last_name: lastName, profile_image: avatar });
-      toast.add({ type: "success", title: "Profile updated" });
+      toast.add({ type: "success", title: "Profile updated Successfully" });
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Update failed." });
     }

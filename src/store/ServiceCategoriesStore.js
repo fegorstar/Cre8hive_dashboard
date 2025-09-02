@@ -1,14 +1,6 @@
 // src/store/ServiceCategoriesStore.js
 // Admin Service Categories & Subcategories store
-// ✅ Uses src/lib/apiClient.js
-// ✅ Categories: { category_name } for create/update
-// ✅ Subcategories: { name, category_id } (category_id coerced to integer)
-// ✅ Handles Laravel paginator { data: { data: [...] } } and wrapper {status, data:{data:[...]}} patterns
-// ✅ Clear error messages from { message, errors }
-// ✅ Parents-only in categories; subcategories kept separately
-// ✅ ADDED: Robust pagination meta (currentPage, lastPage, from, to, total, perPage, links)
-// ✅ ADDED: page-aware fetchers without breaking your old call signatures
-// ✅ ADDED: refresh after CRUD stays on current page
+// Now supports full-list fetching for subcategories to enable accurate client-side pagination/totals per filter.
 
 import { create } from "zustand";
 import api from "../lib/apiClient";
@@ -40,7 +32,6 @@ const extractArray = (res) => {
 // Extract pagination meta from Laravel-style payload
 const extractMeta = (res) => {
   const root = res?.data || {};
-  // meta may live in data.* (Laravel paginator) or at root (some custom APIs)
   const box =
     root?.data && !Array.isArray(root.data) && (root.data.current_page || root.data.last_page)
       ? root.data
@@ -54,7 +45,6 @@ const extractMeta = (res) => {
   let from = Number(box?.from);
   let to = Number(box?.to);
 
-  // Fallback calc if server didn’t send from/to
   if (!Number.isFinite(from)) from = total ? (currentPage - 1) * perPage + 1 : 0;
   if (!Number.isFinite(to)) {
     const arrLen = extractArray(res).length;
@@ -104,7 +94,6 @@ const toInt = (v) => {
 
 /* ---- decoration: map API <-> UI models ---- */
 
-// API category: { id, category_name, created_at, updated_at }
 const decorateCategory = (raw = {}) => ({
   id: Number(raw.id),
   name: raw.category_name ?? raw.name ?? "",
@@ -112,7 +101,6 @@ const decorateCategory = (raw = {}) => ({
   updatedAtReadable: formatReadableDate(raw.updated_at || raw.updatedAt),
 });
 
-// API subcategory: typically { id, name, category_id, created_at, updated_at }
 const decorateSubcategory = (raw = {}, parentName) => ({
   id: Number(raw.id),
   name:
@@ -124,7 +112,11 @@ const decorateSubcategory = (raw = {}, parentName) => ({
     raw.category_id !== undefined && raw.category_id !== null
       ? Number(raw.category_id)
       : Number(raw.parentCategoryId),
-  parentName,
+  parentName:
+    parentName ??
+    raw.category_name ??
+    raw.category?.name ??
+    raw.category?.category_name,
   createdAtReadable: formatReadableDate(raw.created_at || raw.createdAt),
   updatedAtReadable: formatReadableDate(raw.updated_at || raw.updatedAt),
 });
@@ -132,13 +124,19 @@ const decorateSubcategory = (raw = {}, parentName) => ({
 /* ================== STORE ================== */
 
 const useServiceCategoriesStore = create((set, get) => ({
-  // Parents list (UI, current page items)
   categories: JSON.parse(localStorage.getItem("categories") || "[]"),
 
-  // ALL subcategories (kept as current page items; server pagination is source of truth)
+  // Legacy page slice (no longer used by the page, kept for compatibility)
   subCategories: JSON.parse(localStorage.getItem("subCategories") || "[]"),
 
-  // Pagination meta (NEW)
+  // Full list of subcategories across ALL pages (the page uses this for client-side pagination)
+  subAll: JSON.parse(localStorage.getItem("subCategories") || "[]"),
+  subAllLoading: false,
+  subAllPerPage: 10, // we reuse server per_page for a consistent page size
+
+  // Remembered filter (null => ALL)
+  subFilterCategoryId: null,
+
   categoriesMeta: {
     currentPage: 1,
     lastPage: 1,
@@ -148,6 +146,7 @@ const useServiceCategoriesStore = create((set, get) => ({
     to: 0,
     links: [],
   },
+  // kept for backward-compat (not used by the page anymore)
   subCategoriesMeta: {
     currentPage: 1,
     lastPage: 1,
@@ -162,14 +161,11 @@ const useServiceCategoriesStore = create((set, get) => ({
   error: null,
 
   /* --------- FETCH: categories (parents) --------- */
-  // NEW: accepts options object { page?: number }
-  // Old calls (no args) still work and default to page=1
   fetchCategories: async (options = undefined) => {
     const page = typeof options === "object" && options?.page ? Number(options.page) : 1;
 
     set({ loading: true, error: null });
     try {
-      // ✅ Correct endpoint; payload is {status, data:{data:[...], current_page, last_page,...}}
       const res = await api.get(`/admin/category`, { params: { page } });
 
       const raw = extractArray(res);
@@ -193,43 +189,132 @@ const useServiceCategoriesStore = create((set, get) => ({
     }
   },
 
-  /* --------- FETCH: subcategories (server-paginated) --------- */
-  // Backwards compatible:
-  //   fetchSubCategories()                    -> page=1
-  //   fetchSubCategories(5)                   -> parentId=5, page=1
-  //   fetchSubCategories({ parentId: 5 })     -> page=1
-  //   fetchSubCategories({ page: 2 })         -> parentId=null, page=2
-  //   fetchSubCategories({ parentId: 5, page: 2 })
-  fetchSubCategories: async (arg = undefined) => {
+  /* --------- NEW: FETCH ALL SUBCATEGORIES (across pages) --------- */
+  // We fetch every page once, then the UI does perfect client-side filtering & pagination.
+  // We still pass category_id to the server (helps if it supports filtering),
+  // but we always post-process client-side to guarantee correctness.
+  fetchAllSubCategories: async (arg = undefined) => {
+    // optional: arg.parentId can be used to request server-side filtering if supported
     let parentId = null;
+    if (typeof arg === "number") parentId = arg;
+    else if (arg && typeof arg === "object" && arg.parentId !== undefined) parentId = arg.parentId;
+
+    set({ subAllLoading: true, error: null });
+    try {
+      let page = 1;
+      let lastPage = 1;
+      let perPage = 10;
+      const acc = [];
+
+      const baseParams = {};
+      if (parentId !== null && parentId !== undefined) {
+        const cidInt = toInt(parentId);
+        if (!Number.isNaN(cidInt)) {
+          const cid = String(cidInt);
+          baseParams.category_id = cid;
+          baseParams.categoryId = cid;
+          baseParams.category = cid;
+        }
+      }
+
+      // safety cap to avoid infinite loops
+      const MAX_PAGES = 200;
+
+      do {
+        const res = await api.get(`/admin/sub-category`, { params: { ...baseParams, page } });
+        const meta = extractMeta(res);
+        if (page === 1) {
+          perPage = meta.perPage || 10;
+        }
+        lastPage = meta.lastPage || 1;
+
+        const arr = extractArray(res);
+        acc.push(...arr);
+
+        page += 1;
+      } while (page <= lastPage && page <= MAX_PAGES);
+
+      // decorate with category names if available
+      const cats = get().categories || [];
+      const catsMap = new Map(cats.map((c) => [Number(c.id), c.name]));
+
+      const list = acc.map((s) =>
+        decorateSubcategory(
+          s,
+          catsMap.get(Number(s.category_id ?? s.categoryId ?? s.category))
+        )
+      );
+
+      set({
+        subAll: list,
+        subCategories: list, // keep legacy mirror updated for other places
+        subAllPerPage: perPage,
+        subCategoriesMeta: {
+          currentPage: 1,
+          lastPage,
+          perPage,
+          total: acc.length,
+          from: 1,
+          to: Math.min(perPage, acc.length),
+          links: [],
+        },
+        subAllLoading: false,
+      });
+
+      localStorage.setItem("subCategories", JSON.stringify(list));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("fetchAllSubCategories:", err);
+      set({
+        error: getErrorMessage(err, "Failed to fetch subcategories."),
+        subAllLoading: false,
+      });
+      throw err;
+    }
+  },
+
+  /* --------- Legacy: page-by-page fetch (kept in case other screens use it) --------- */
+  fetchSubCategories: async (arg = undefined) => {
+    let parentId = get().subFilterCategoryId; // default to remembered
     let page = 1;
 
     if (typeof arg === "number") {
       parentId = arg;
     } else if (typeof arg === "object" && arg !== null) {
-      if (arg.parentId !== undefined) parentId = arg.parentId;
+      if (arg.parentId !== undefined) parentId = arg.parentId; // can be null (ALL)
       if (arg.page !== undefined) page = Number(arg.page);
     }
 
     set({ loading: true, error: null });
     try {
       const params = { page };
+
       if (parentId !== null && parentId !== undefined) {
-        const cid = toInt(parentId);
-        if (!Number.isNaN(cid)) params.category_id = cid;
+        const cidInt = toInt(parentId);
+        if (!Number.isNaN(cidInt)) {
+          const cid = String(cidInt);
+          params.category_id = cid; // Laravel-style
+          params.categoryId = cid;  // camelCase
+          params.category   = cid;  // generic
+        }
       }
 
-      // ✅ Correct endpoint; payload is {status, data:{data:[...], current_page,...}}
       const res = await api.get(`/admin/sub-category`, { params });
 
       const raw = extractArray(res);
 
-      // Map categoryId -> name for display
       const cats = get().categories || [];
       const catsMap = new Map(cats.map((c) => [Number(c.id), c.name]));
 
       const list = raw.map((s) =>
-        decorateSubcategory(s, catsMap.get(Number(s.category_id)))
+        decorateSubcategory(
+          s,
+          catsMap.get(
+            Number(
+              s.category_id ?? s.categoryId ?? s.category
+            )
+          )
+        )
       );
 
       const meta = extractMeta(res);
@@ -237,6 +322,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       set({
         subCategories: list,
         subCategoriesMeta: meta,
+        subFilterCategoryId: parentId ?? null,
         loading: false,
       });
       localStorage.setItem("subCategories", JSON.stringify(list));
@@ -251,6 +337,9 @@ const useServiceCategoriesStore = create((set, get) => ({
     }
   },
 
+  /* --------- Filter memory helper --------- */
+  setSubFilterCategoryId: (id) => set({ subFilterCategoryId: id ?? null }),
+
   /* --------- CREATE / UPDATE / DELETE: Category --------- */
 
   createCategory: async ({ name }) => {
@@ -259,7 +348,6 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { category_name: (name || "").trim() };
       await api.post(`/admin/category/create`, payload);
 
-      // Stay on current page after create
       const cur = get().categoriesMeta.currentPage || 1;
       await get().fetchCategories({ page: cur });
 
@@ -306,7 +394,6 @@ const useServiceCategoriesStore = create((set, get) => ({
       await api.delete(`/admin/category/${id}`);
 
       const cur = get().categoriesMeta.currentPage || 1;
-      // If deleting last item of the last page, make sure we don't exceed lastPage afterward
       await get().fetchCategories({ page: cur });
 
       set({ loading: false });
@@ -334,8 +421,8 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { name: cleanName, category_id };
       await api.post(`/admin/sub-category/create`, payload);
 
-      const cur = get().subCategoriesMeta.currentPage || 1;
-      await get().fetchSubCategories({ page: cur, parentId: null }); // keep same page
+      // do not rely on server meta — refresh ALL
+      await get().fetchAllSubCategories();
 
       set({ loading: false });
       return { message: "Subcategory created successfully" };
@@ -360,8 +447,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { name: cleanName, category_id };
       await api.put(`/admin/sub-category/${id}`, payload);
 
-      const cur = get().subCategoriesMeta.currentPage || 1;
-      await get().fetchSubCategories({ page: cur, parentId: null });
+      await get().fetchAllSubCategories();
 
       set({ loading: false });
       return { message: "Subcategory updated successfully" };
@@ -382,8 +468,7 @@ const useServiceCategoriesStore = create((set, get) => ({
     try {
       await api.delete(`/admin/sub-category/${id}`);
 
-      const cur = get().subCategoriesMeta.currentPage || 1;
-      await get().fetchSubCategories({ page: cur, parentId: null });
+      await get().fetchAllSubCategories();
 
       set({ loading: false });
       return { message: "Subcategory deleted successfully" };
@@ -399,7 +484,6 @@ const useServiceCategoriesStore = create((set, get) => ({
     }
   },
 
-  // Optional: view one subcategory
   getSubCategory: async (id) => {
     try {
       const res = await api.get(`/admin/sub-category/${id}`);

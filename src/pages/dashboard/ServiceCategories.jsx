@@ -1,14 +1,5 @@
 // src/pages/ServiceCategories/ServiceCategories.jsx
-// Matches Creators/Members loader UX:
-//  - Table always renders
-//  - When there are NO rows: show a single "Loading…" row (no overlay)
-//  - When there ARE rows and we're reloading: show centered overlay spinner (no fade)
-//
-// UPDATED:
-//  - Uses server-side pagination from store meta (categoriesMeta, subCategoriesMeta).
-//  - Subcategory filter sends category_id to backend (server paginates correctly).
-//  - Prev/Next fetches new pages with current filter retained.
-//  - After create/update/delete, refresh stays on current page & filter.
+// Complete, filter-accurate subcategory pagination (client-side over fully loaded list)
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -26,7 +17,7 @@ import { Spinner } from "../../components/common/Spinner";
 
 const BRAND_RGB = "rgb(77, 52, 144)";
 
-/* ---------- Tabs (active = brand text + thick underline) ---------- */
+/* ---------- Tabs ---------- */
 const Tabs = ({ value, onChange }) => {
   const tabs = [
     { key: "categories", label: "Categories" },
@@ -201,7 +192,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
   );
 };
 
-/* ---------- Table shells (overlay only when there are rows) ---------- */
+/* ---------- Table shells ---------- */
 const TableShell = ({ children, footerLeft, footerRight, showOverlay }) => (
   <div className="relative rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
     <div className="overflow-auto">{children}</div>
@@ -314,8 +305,8 @@ const SubcategoriesTable = ({
               <tr key={row.id ?? row.name} className="border-t border-gray-100">
                 <td className="px-4 py-3">{row.name}</td>
                 <td className="px-4 py-3">
-                  {categoryNameById.get(Number(row.parentCategoryId)) ||
-                    categoryNameById.get(Number(row.category_id)) ||
+                  {row.parentName ||
+                    categoryNameById.get(Number(row.parentCategoryId)) ||
                     "—"}
                 </td>
                 <td className="px-4 py-3">{row.createdAtReadable}</td>
@@ -341,12 +332,22 @@ const SubcategoriesTable = ({
 /* ---------- store pickers ---------- */
 const useServiceCategoriesStoreActions = () => {
   const categories = useServiceCategoriesStore((s) => s.categories);
-  const subCategories = useServiceCategoriesStore((s) => s.subCategories);
-  const categoriesMeta = useServiceCategoriesStore((s) => s.categoriesMeta);
-  const subCategoriesMeta = useServiceCategoriesStore((s) => s.subCategoriesMeta);
 
+  // Client-side full dataset for subcategories
+  const subAll = useServiceCategoriesStore((s) => s.subAll);
+  const subAllLoading = useServiceCategoriesStore((s) => s.subAllLoading);
+  const subAllPerPage = useServiceCategoriesStore((s) => s.subAllPerPage);
+  const fetchAllSubCategories = useServiceCategoriesStore((s) => s.fetchAllSubCategories);
+
+  // Remote meta used only for categories table
+  const categoriesMeta = useServiceCategoriesStore((s) => s.categoriesMeta);
+
+  // Remembered filter helpers
+  const rememberedFilter = useServiceCategoriesStore((s) => s.subFilterCategoryId);
+  const setSubFilterCategoryId = useServiceCategoriesStore((s) => s.setSubFilterCategoryId);
+
+  // CRUD
   const fetchCategories = useServiceCategoriesStore((s) => s.fetchCategories);
-  const fetchSubCategories = useServiceCategoriesStore((s) => s.fetchSubCategories);
   const createCategory = useServiceCategoriesStore((s) => s.createCategory);
   const createSubCategory = useServiceCategoriesStore((s) => s.createSubCategory);
   const updateCategory = useServiceCategoriesStore((s) => s.updateCategory);
@@ -356,11 +357,14 @@ const useServiceCategoriesStoreActions = () => {
 
   return {
     categories,
-    subCategories,
+    subAll,
+    subAllLoading,
+    subAllPerPage,
+    fetchAllSubCategories,
     categoriesMeta,
-    subCategoriesMeta,
+    rememberedFilter,
+    setSubFilterCategoryId,
     fetchCategories,
-    fetchSubCategories,
     createCategory,
     createSubCategory,
     updateCategory,
@@ -380,11 +384,14 @@ const ServiceCategories = () => {
 
   const {
     categories,
-    subCategories,
+    subAll,
+    subAllLoading,
+    subAllPerPage,
+    fetchAllSubCategories,
     categoriesMeta,
-    subCategoriesMeta,
+    rememberedFilter,
+    setSubFilterCategoryId,
     fetchCategories,
-    fetchSubCategories,
     createCategory,
     createSubCategory,
     updateCategory,
@@ -400,25 +407,23 @@ const ServiceCategories = () => {
   );
 
   const [tab, setTab] = useState("categories");
+
+  // UI dropdown; sync to remembered filter
   const [subcatFilter, setSubcatFilter] = useState("ALL");
+  useEffect(() => {
+    setSubcatFilter(rememberedFilter == null ? "ALL" : String(rememberedFilter));
+  }, [rememberedFilter]);
 
-  // Local loading flags to control the table loaders precisely
+  // precise table loaders
   const [catsLoading, setCatsLoading] = useState(false);
-  const [subsLoading, setSubsLoading] = useState(false);
 
-  // Mirror current pages from meta (for footer display)
   const [catsPage, setCatsPage] = useState(1);
-  const [subsPage, setSubsPage] = useState(1);
 
   useEffect(() => {
     setCatsPage(categoriesMeta?.currentPage || 1);
   }, [categoriesMeta?.currentPage]);
 
-  useEffect(() => {
-    setSubsPage(subCategoriesMeta?.currentPage || 1);
-  }, [subCategoriesMeta?.currentPage]);
-
-  // initial categories (page 1)
+  // initial categories
   useEffect(() => {
     (async () => {
       try {
@@ -432,60 +437,129 @@ const ServiceCategories = () => {
     })();
   }, [fetchCategories]); // eslint-disable-line
 
-  // load subcats on tab change (page 1, honor current filter)
+  // load ALL subcats when tab opens (for accurate client pagination + totals)
   useEffect(() => {
     if (tab !== "subcategories") return;
     (async () => {
       try {
-        setSubsLoading(true);
-        const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
-        await fetchSubCategories({ page: 1, parentId });
+        await fetchAllSubCategories();
       } catch (e) {
         toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load subcategories." });
-      } finally {
-        setSubsLoading(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  /* ----- REMOTE PAGINATION (Categories) ----- */
+  /* ----- CATEGORIES (remote pagination) ----- */
   const catsTotal = categoriesMeta?.total || 0;
   const catsTotalPages = categoriesMeta?.lastPage || 1;
   const catsStart = categoriesMeta?.from || 0;
   const catsEnd = categoriesMeta?.to || 0;
-  const catsVisible = categories; // already current page from server
-
-  /* ----- REMOTE PAGINATION (Subcategories + Filter) ----- */
-  const subsTotal = subCategoriesMeta?.total || 0;
-  const subsTotalPages = subCategoriesMeta?.lastPage || 1;
-  const subsStart = subCategoriesMeta?.from || 0;
-  const subsEnd = subCategoriesMeta?.to || 0;
-  const subsVisible = subCategories; // already current page from server
+  const catsVisible = categories;
 
   const makeFooterLeft = (total, start, end) =>
     total === 0 ? "No records" : `Showing ${start}–${end} of ${total} record${total > 1 ? "s" : ""}`;
 
-  // Prev/Next footer that calls the server with page +/- 1
-  const makeFooterRight = ({ page, totalPages, onPrev, onNext }) => (
+  const catsFooterLeft = makeFooterLeft(catsTotal, catsStart, catsEnd);
+
+  const catsFooterRight = (
     <div className="flex items-center gap-2">
       <button
-        disabled={page <= 1}
-        onClick={onPrev}
+        disabled={catsPage <= 1}
+        onClick={async () => {
+          if (catsPage <= 1) return;
+          try {
+            setCatsLoading(true);
+            await fetchCategories({ page: catsPage - 1 });
+          } finally {
+            setCatsLoading(false);
+          }
+        }}
         className={`px-3 py-1.5 rounded-lg border ${
-          page <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+          catsPage <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
         }`}
       >
         Prev
       </button>
       <span className="text-sm text-gray-600">
-        Page {page} / {totalPages}
+        Page {catsPage} / {catsTotalPages}
       </span>
       <button
-        disabled={page >= totalPages}
-        onClick={onNext}
+        disabled={catsPage >= catsTotalPages}
+        onClick={async () => {
+          if (catsPage >= catsTotalPages) return;
+          try {
+            setCatsLoading(true);
+            await fetchCategories({ page: catsPage + 1 });
+          } finally {
+            setCatsLoading(false);
+          }
+        }}
         className={`px-3 py-1.5 rounded-lg border ${
-          page >= totalPages ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+          catsPage >= catsTotalPages ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+        }`}
+      >
+        Next
+      </button>
+    </div>
+  );
+
+  /* ----- SUBCATEGORIES (client pagination over full list) ----- */
+  const pageSize = subAllPerPage || 10;
+
+  // Full list -> filter by selected category
+  const allSubs = Array.isArray(subAll) ? subAll : [];
+  const subsFiltered =
+    subcatFilter === "ALL"
+      ? allSubs
+      : allSubs.filter((r) => Number(r.parentCategoryId) === Number(subcatFilter));
+
+  // Client-side paginator over filtered list
+  const [subsPage, setSubsPage] = useState(1);
+  useEffect(() => {
+    // whenever filter changes or full list reloads, reset page 1
+    setSubsPage(1);
+  }, [subcatFilter, allSubs.length]);
+
+  const subsTotal = subsFiltered.length;
+  const subsTotalPages = Math.max(1, Math.ceil(subsTotal / pageSize));
+
+  // clamp current page within bounds
+  useEffect(() => {
+    if (subsPage > subsTotalPages) setSubsPage(subsTotalPages);
+  }, [subsPage, subsTotalPages]);
+
+  const subsStart = subsTotal === 0 ? 0 : (subsPage - 1) * pageSize + 1;
+  const subsEnd = subsTotal === 0 ? 0 : Math.min(subsPage * pageSize, subsTotal);
+
+  const subsRows = subsFiltered.slice(subsStart - 1, subsEnd);
+
+  const subsFooterLeft =
+    subcatFilter === "ALL"
+      ? makeFooterLeft(subsTotal, subsStart, subsEnd)
+      : `Showing ${subsStart}–${subsEnd} of ${subsTotal} (Category: ${
+          categoriesMap.get(Number(subcatFilter)) || "—"
+        })`;
+
+  const subsFooterRight = (
+    <div className="flex items-center gap-2">
+      <button
+        disabled={subsPage <= 1}
+        onClick={() => subsPage > 1 && setSubsPage(subsPage - 1)}
+        className={`px-3 py-1.5 rounded-lg border ${
+          subsPage <= 1 ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
+        }`}
+      >
+        Prev
+      </button>
+      <span className="text-sm text-gray-600">
+        Page {subsPage} / {subsTotalPages}
+      </span>
+      <button
+        disabled={subsPage >= subsTotalPages}
+        onClick={() => subsPage < subsTotalPages && setSubsPage(subsPage + 1)}
+        className={`px-3 py-1.5 rounded-lg border ${
+          subsPage >= subsTotalPages ? "text-gray-400 border-gray-200" : "border-gray-300 hover:bg-gray-50"
         }`}
       >
         Next
@@ -531,7 +605,11 @@ const ServiceCategories = () => {
 
   const closeModal = () => setModalOpen(false);
 
-  // Ask delete
+  // Delete with refresh that keeps filter/page
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmPayload, setConfirmPayload] = useState(null);
+
   const askDeleteCategory = (row) => {
     setConfirmPayload({ type: "category", row });
     setConfirmOpen(true);
@@ -541,12 +619,6 @@ const ServiceCategories = () => {
     setConfirmOpen(true);
   };
 
-  // Confirm dialog
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmBusy, setConfirmBusy] = useState(false);
-  const [confirmPayload, setConfirmPayload] = useState(null);
-
-  // Confirm delete
   const handleConfirmDelete = async () => {
     if (!confirmPayload) return;
     setConfirmBusy(true);
@@ -556,24 +628,22 @@ const ServiceCategories = () => {
         await deleteCategory(row.id);
         toast.add({ type: "success", title: "Deleted", message: "Category deleted successfully." });
 
-        setCatsLoading(true);
-        await fetchCategories({ page: catsPage || 1 });
-        setCatsLoading(false);
-
-        if (tab === "subcategories") {
-          setSubsLoading(true);
-          const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
-          await fetchSubCategories({ page: subsPage || 1, parentId });
-          setSubsLoading(false);
+        // Refresh categories (remote)
+        try {
+          setCatsLoading(true);
+          await fetchCategories({ page: catsPage || 1 });
+        } finally {
+          setCatsLoading(false);
         }
+
+        // Also refresh full subcategory list (since parent may affect display)
+        await fetchAllSubCategories();
       } else {
         await deleteSubCategory(row.id);
         toast.add({ type: "success", title: "Deleted", message: "Subcategory deleted successfully." });
 
-        setSubsLoading(true);
-        const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
-        await fetchSubCategories({ page: subsPage || 1, parentId });
-        setSubsLoading(false);
+        // Refresh full subcategory list for accurate totals + pages
+        await fetchAllSubCategories();
       }
       setConfirmOpen(false);
       setConfirmPayload(null);
@@ -596,10 +666,7 @@ const ServiceCategories = () => {
           await createSubCategory(payload);
           toast.add({ type: "success", title: "Created", message: "Subcategory created successfully." });
         }
-        setSubsLoading(true);
-        const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
-        await fetchSubCategories({ page: subsPage || 1, parentId });
-        setSubsLoading(false);
+        await fetchAllSubCategories(); // refresh full list so totals/pages are correct
       } else {
         if (modalMode === "edit" && modalRecord?.id) {
           await updateCategory(modalRecord.id, payload);
@@ -608,9 +675,13 @@ const ServiceCategories = () => {
           await createCategory(payload);
           toast.add({ type: "success", title: "Created", message: "Category created successfully." });
         }
-        setCatsLoading(true);
-        await fetchCategories({ page: catsPage || 1 });
-        setCatsLoading(false);
+        try {
+          setCatsLoading(true);
+          await fetchCategories({ page: catsPage || 1 });
+        } finally {
+          setCatsLoading(false);
+        }
+        await fetchAllSubCategories(); // keep sub list consistent with new parent
       }
       closeModal();
     } catch (e) {
@@ -625,57 +696,6 @@ const ServiceCategories = () => {
   const modalTitle = `${modalMode[0].toUpperCase()}${modalMode.slice(1)} ${
     modalType === "category" ? "Category" : "Subcategory"
   }`;
-
-  /* ----- footer builders ----- */
-  const catsFooterLeft = makeFooterLeft(catsTotal, catsStart, catsEnd);
-  const catsFooterRight = makeFooterRight({
-    page: catsPage,
-    totalPages: catsTotalPages,
-    onPrev: async () => {
-      if (catsPage <= 1) return;
-      try {
-        setCatsLoading(true);
-        await fetchCategories({ page: catsPage - 1 });
-      } finally {
-        setCatsLoading(false);
-      }
-    },
-    onNext: async () => {
-      if (catsPage >= catsTotalPages) return;
-      try {
-        setCatsLoading(true);
-        await fetchCategories({ page: catsPage + 1 });
-      } finally {
-        setCatsLoading(false);
-      }
-    },
-  });
-
-  const subsFooterLeft = makeFooterLeft(subsTotal, subsStart, subsEnd);
-  const subsFooterRight = makeFooterRight({
-    page: subsPage,
-    totalPages: subsTotalPages,
-    onPrev: async () => {
-      if (subsPage <= 1) return;
-      const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
-      try {
-        setSubsLoading(true);
-        await fetchSubCategories({ page: subsPage - 1, parentId });
-      } finally {
-        setSubsLoading(false);
-      }
-    },
-    onNext: async () => {
-      if (subsPage >= subsTotalPages) return;
-      const parentId = subcatFilter === "ALL" ? null : Number(subcatFilter);
-      try {
-        setSubsLoading(true);
-        await fetchSubCategories({ page: subsPage + 1, parentId });
-      } finally {
-        setSubsLoading(false);
-      }
-    },
-  });
 
   return (
     <main>
@@ -728,17 +748,11 @@ const ServiceCategories = () => {
                 <label className="text-sm text-gray-700">Category filter</label>
                 <select
                   value={subcatFilter}
-                  onChange={async (e) => {
+                  onChange={(e) => {
                     const next = e.target.value;
-                    setSubcatFilter(next);
-                    setSubsPage(1);
-                    const parentId = next === "ALL" ? null : Number(next);
-                    try {
-                      setSubsLoading(true);
-                      await fetchSubCategories({ page: 1, parentId });
-                    } finally {
-                      setSubsLoading(false);
-                    }
+                    setSubFilterCategoryId(next === "ALL" ? null : Number(next)); // persist
+                    setSubcatFilter(next); // local
+                    // page reset handled by useEffect
                   }}
                   className={`${selectBase} w-60`}
                 >
@@ -752,7 +766,7 @@ const ServiceCategories = () => {
               </div>
             )}
 
-            {/* Tables: always render; loader inside table (row/overlay) */}
+            {/* Tables */}
             <div className="space-y-4">
               {tab === "categories" && (
                 <CategoriesTable
@@ -768,8 +782,8 @@ const ServiceCategories = () => {
 
               {tab === "subcategories" && (
                 <SubcategoriesTable
-                  rows={subsVisible}
-                  loading={subsLoading}
+                  rows={subsRows /* client-paginated filtered rows */}
+                  loading={subAllLoading}
                   categoryNameById={categoriesMap}
                   onView={(row) => openView("subcategory", row)}
                   onEdit={(row) => openEdit("subcategory", row)}
