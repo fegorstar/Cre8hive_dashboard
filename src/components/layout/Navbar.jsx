@@ -51,7 +51,8 @@ const Navbar = (props) => {
   return (
     <div className="header">
       <nav
-        className="px-6 py-[10px] flex items-center justify-between shadow-sm border-b sticky top-0 z-30"
+        // ⬇️ Make the navbar fixed globally; content will pad-top via CSS.
+        className="fixed top-0 inset-x-0 lg:left-[15.625rem] h-16 z-40 px-6 flex items-center justify-between shadow-sm border-b"
         style={{
           backgroundColor: isBrand ? BRAND_RGB : '#ffffff',
           borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#D1D5DB',
@@ -88,7 +89,7 @@ const Navbar = (props) => {
         {/* Right cluster */}
         <ul className="flex ml-auto items-center">
           {/* Notifications */}
-          <li className="dropdown stopevent mr-2">
+          <li className="dropdown stopevent mr-2 relative">
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
             <a
               className={isBrand ? 'text-white' : 'text-gray-600'}
@@ -105,7 +106,7 @@ const Navbar = (props) => {
               </span>
             </a>
             <div
-              className="dropdown-menu dropdown-menu-lg lg:left-auto lg:right-0"
+              className="dropdown-menu dropdown-menu-lg lg:left-auto lg:right-0 absolute z-50"
               aria-labelledby="dropdownNotification"
             >
               <div className="border-b px-3 pt-2 pb-3 flex justify-between items-center">
@@ -140,7 +141,7 @@ const Navbar = (props) => {
           </li>
 
           {/* User */}
-          <li className="dropdown ml-2">
+          <li className="dropdown ml-2 relative">
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
             <a
               className="flex items-center cursor-pointer"
@@ -177,7 +178,7 @@ const Navbar = (props) => {
                 <span className={isBrand ? 'text-white/80 text-sm' : 'text-gray-500 text-sm'}>{user?.email}</span>
               </div>
             </a>
-            <div className="dropdown-menu dropdown-menu-end p-2" aria-labelledby="dropdownUser">
+            <div className="dropdown-menu dropdown-menu-end p-2 absolute z-50" aria-labelledby="dropdownUser">
               <div className="px-4 pb-0 pt-2">
                 <div className="border-b mt-3 mb-2" />
               </div>

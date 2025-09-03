@@ -1,6 +1,5 @@
 @import "tailwindcss";
 
-
 @font-face {
   font-family: 'Nohemi';
   src: url('/assets/fonts/nohemi-font-family/Nohemi-Regular-BF6438cc579d934.woff2') format('woff2'),
@@ -10,12 +9,34 @@
   font-style: normal;
 }
 
-
 @import 'font-awesome/css/font-awesome.min.css';
 
 body {
   font-family: 'Nohemi', sans-serif;
 }
 
+/* === Fixed Navbar Global Offsets ===
+   Keep these in sync with Navbar height and your layout wrappers.
+   h-14 (Tailwind) ≈ 3.5rem
+*/
+:root {
+  --navbar-height: 3.5rem;
+}
+
+/* Any page that uses the shared content wrapper id gets the offset.
+   Your Dashboard/Reports/Investments already use #app-layout-content. */
+#app-layout-content {
+  padding-top: var(--navbar-height);
+}
 
 
+
+/* Optional: if any dropdowns/tooltips render under content after fixing the navbar */
+.dropdown-menu {
+  z-index: 50; /* Above page content, under modals if you have z-50/60 stacks */
+}
+
+/* (Optional) Smooth scrolling under the fixed bar when using anchor links */
+html {
+  scroll-padding-top: var(--navbar-height);
+}
