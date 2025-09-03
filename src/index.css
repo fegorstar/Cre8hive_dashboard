@@ -1,3 +1,4 @@
+:root { --navbar-height: 3.5rem; } /* h-14 */
 @import "tailwindcss";
 
 @font-face {

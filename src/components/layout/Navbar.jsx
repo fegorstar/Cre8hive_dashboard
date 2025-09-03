@@ -11,20 +11,19 @@ const LOGO_BRAND = '/assets/images/logo-white.png';
 const Navbar = (props) => {
   const navigate = useNavigate();
 
-  // Auth (pick only what we need)
+  // Auth
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
 
-  // Layout store (fallback if props aren't passed)
+  // Layout (fallbacks if props aren’t passed)
   const storeSidebarOpen = useLayoutStore((s) => s.sidebarOpen);
   const storeToggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
-  // Theme state
+  // Theme
   const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
   const toggleTheme = useLayoutStore((s) => s.toggleTheme);
   const isBrand = uiTheme === 'brand';
 
-  // Back-compat: support parent-managed sidebar if props were provided
   const isSidebarOpen =
     typeof props?.isSidebarOpen === 'boolean' ? props.isSidebarOpen : storeSidebarOpen;
   const toggleSidebar =
@@ -42,21 +41,23 @@ const Navbar = (props) => {
     return `${(f[0] || 'N').toUpperCase()}${(l[0] || 'N').toUpperCase()}`;
   };
 
-  // Reusable styles for small round icon buttons on the right
   const iconBtnClass = [
     'inline-flex items-center justify-center w-10 h-10 rounded-md border transition',
-    isBrand ? 'border-white/25 hover:bg-white/10 text-white' : 'border-gray-300 hover:bg-gray-100 text-gray-700',
+    isBrand
+      ? 'border-white/25 hover:bg-white/10 text-white'
+      : 'border-gray-300 hover:bg-gray-100 text-gray-700',
   ].join(' ');
 
   return (
     <div className="header">
       <nav
-        // ⬇️ Make the navbar fixed globally; content will pad-top via CSS.
-        className="fixed top-0 inset-x-0 lg:left-[15.625rem] h-16 z-40 px-6 flex items-center justify-between shadow-sm border-b"
+        className="fixed top-0 right-0 left-0 lg:left-64 h-14 z-40 border-b shadow-sm
+                   flex items-center justify-between pl-5 lg:pl-8 xl:pl-10 pr-4 sm:pr-6"
         style={{
           backgroundColor: isBrand ? BRAND_RGB : '#ffffff',
-          borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#D1D5DB',
+          borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#E5E7EB',
           color: isBrand ? '#ffffff' : '#111827',
+          transform: 'translateZ(0)',
         }}
       >
         {/* Mobile hamburger / X */}
@@ -66,7 +67,9 @@ const Navbar = (props) => {
           className={[
             'lg:hidden',
             'inline-flex items-center justify-center w-10 h-10 rounded-md border',
-            isBrand ? 'border-white/25 hover:bg-white/10 text-white' : 'border-gray-300 hover:bg-gray-100 text-gray-700',
+            isBrand
+              ? 'border-white/25 hover:bg-white/10 text-white'
+              : 'border-gray-300 hover:bg-gray-100 text-gray-700',
           ].join(' ')}
           aria-label={isSidebarOpen ? 'Close menu' : 'Open menu'}
           aria-controls="mobile-sidebar"
@@ -75,20 +78,29 @@ const Navbar = (props) => {
           {isSidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
         </button>
 
-        {/* Center (lg: left) - logo */}
-        <div className="flex-1 flex justify-center lg:justify-start">
-          <Link to="/dashboard" className="hidden lg:inline-block" aria-label="Soundhive">
+        {/* Brand area */}
+        <div className="flex-1 min-w-0 flex items-center">
+          {/* MOBILE: logo hidden (drawer shows it). */}
+          {/* DESKTOP: show logo; brand logo slightly larger for optical match. */}
+          <Link
+            to="/dashboard"
+            aria-label="Soundhive"
+            className="hidden lg:flex items-center leading-[0]"
+          >
             <img
               src={isBrand ? LOGO_BRAND : LOGO_LIGHT}
               alt="Soundhive"
-              className="h-6 w-auto"
+              className={[
+                'block w-auto object-contain shrink-0',
+                isBrand ? 'h-12' : 'h-9', // ⬅️ increased brand logo size
+              ].join(' ')}
+              style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
             />
           </Link>
         </div>
 
         {/* Right cluster */}
         <ul className="flex ml-auto items-center">
-          {/* Notifications */}
           <li className="dropdown stopevent mr-2 relative">
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
             <a
@@ -126,7 +138,6 @@ const Navbar = (props) => {
             </div>
           </li>
 
-          {/* Theme switcher (right beside bell) */}
           <li className="ml-2">
             <button
               type="button"
@@ -140,7 +151,6 @@ const Navbar = (props) => {
             </button>
           </li>
 
-          {/* User */}
           <li className="dropdown ml-2 relative">
             {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
             <a
@@ -175,7 +185,9 @@ const Navbar = (props) => {
                 <span className={['font-semibold', isBrand ? 'text-white' : 'text-gray-800'].join(' ')}>
                   {user?.first_name} {user?.last_name}
                 </span>
-                <span className={isBrand ? 'text-white/80 text-sm' : 'text-gray-500 text-sm'}>{user?.email}</span>
+                <span className={isBrand ? 'text-white/80 text-sm' : 'text-gray-500 text-sm'}>
+                  {user?.email}
+                </span>
               </div>
             </a>
             <div className="dropdown-menu dropdown-menu-end p-2 absolute z-50" aria-labelledby="dropdownUser">

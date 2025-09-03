@@ -1,4 +1,3 @@
-// src/components/layout/Sidebar.jsx
 import React, { useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
@@ -26,9 +25,9 @@ const Sidebar = (props) => {
   const user = useAuthStore((s) => s.user);
 
   // Store state (fallback if props not passed)
-  const storeOpen = useLayoutStore((s) => s.sidebarOpen);
+  const storeOpen   = useLayoutStore((s) => s.sidebarOpen);
   const storeToggle = useLayoutStore((s) => s.toggleSidebar);
-  const storeClose = useLayoutStore((s) => s.closeSidebar);
+  const storeClose  = useLayoutStore((s) => s.closeSidebar);
 
   const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
   const isBrand = uiTheme === 'brand';
@@ -55,7 +54,7 @@ const Sidebar = (props) => {
     { title: 'Settings', path: '/settings', icon: MdOutlineSettings },
   ];
 
-  // -------- Update browser tab title on route change --------
+  // -------- Update tab title on route change --------
   useEffect(() => {
     const found = menuItems.find(
       (m) => location.pathname === m.path || location.pathname.startsWith(m.path + '/')
@@ -79,7 +78,7 @@ const Sidebar = (props) => {
     if (isOpen) closeSidebar();
   }, [isOpen, closeSidebar]);
 
-  // document-level outside click (pointerdown)
+  // document-level outside click
   useEffect(() => {
     if (!isOpen) return;
     const onPointerDown = (e) => {
@@ -105,13 +104,12 @@ const Sidebar = (props) => {
     if (isOpen) closeSidebar();
   }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---------- Nav item with RIGHT-side active highlight & theme-aware colors ----------
+  // ---------- Nav item with LEFT-side active highlight ----------
   const NavItem = ({ title, path, icon: Icon }) => {
     const active =
       location.pathname === path || location.pathname.startsWith(path + '/');
 
-    const base =
-      'flex items-center rounded-md text-base font-medium transition-colors px-4 py-3 pr-6';
+    const base = 'group relative flex items-center rounded-md text-base font-medium transition-colors px-4 py-3 pr-6';
 
     const textCls = isBrand
       ? active
@@ -132,7 +130,7 @@ const Sidebar = (props) => {
     const barColor = isBrand ? 'rgba(255,255,255,0.9)' : ACCENT;
 
     return (
-      <li className="group relative">
+      <li>
         <Link
           to={path}
           aria-current={active ? 'page' : undefined}
@@ -142,11 +140,10 @@ const Sidebar = (props) => {
           {Icon ? <Icon className={['mr-3 h-5 w-5 transition-colors', iconCls].join(' ')} /> : null}
           <span>{title}</span>
 
-          {/* Right-side highlighter for ACTIVE state */}
           {active && (
             <span
               aria-hidden="true"
-              className="absolute right-0 top-1.5 bottom-1.5 w-1.5 rounded-l-full"
+              className="pointer-events-none absolute left-0 top-2 bottom-2 w-1.5 rounded-r-full"
               style={{
                 background: barColor,
                 boxShadow: isBrand
@@ -160,7 +157,7 @@ const Sidebar = (props) => {
     );
   };
 
-  // Shared container styles for asides
+  // Shared container styles
   const asideStyle = {
     backgroundColor: isBrand ? BRAND_RGB : '#ffffff',
     borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#E5E7EB',
@@ -169,17 +166,11 @@ const Sidebar = (props) => {
 
   const logoSrc = isBrand ? LOGO_BRAND : LOGO_LIGHT;
 
-  // HIDE scrollbars but keep scrollability (Firefox + legacy Edge)
-  const hideScrollInline = {
-    scrollbarWidth: 'none',   // Firefox
-    msOverflowStyle: 'none',  // IE/Edge (legacy)
-  };
-
-  const sbTheme = isBrand ? 'brand' : 'light'; // just a hook if you need it later
+  const hideScrollInline = { scrollbarWidth: 'none', msOverflowStyle: 'none' };
+  const sbTheme = isBrand ? 'brand' : 'light';
 
   return (
     <>
-      {/* component-scoped, inline CSS for WebKit to hide scrollbars */}
       <style>{`
         [data-sb="scroll"]::-webkit-scrollbar { width: 0; height: 0; }
         [data-sb="scroll"]::-webkit-scrollbar-track { background: transparent; }
@@ -210,13 +201,26 @@ const Sidebar = (props) => {
         aria-label="Mobile Sidebar"
         tabIndex={-1}
       >
-        {/* Drawer header */}
+        {/* Drawer header: h-14 to align with navbar */}
         <div
-          className="flex items-center justify-between px-5 py-4 border-b"
+          className="flex items-center justify-between h-14 px-5 border-b"
           style={{ borderColor: asideStyle.borderColor }}
         >
-          <Link to={user ? '/dashboard' : '/'} className="navbar-brand" onClick={handleLinkClick} aria-label="Soundhive">
-            <img src={logoSrc} alt="Soundhive" className="h-6 w-auto" />
+          <Link
+            to={user ? '/dashboard' : '/'}
+            className="navbar-brand leading-[0]"
+            onClick={handleLinkClick}
+            aria-label="Soundhive"
+          >
+            <img
+              src={logoSrc}
+              alt="Soundhive"
+              className={[
+                'block w-auto object-contain shrink-0',
+                isBrand ? 'h-12' : 'h-9', // ⬅️ increased brand logo size
+              ].join(' ')}
+              style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
+            />
           </Link>
           <button
             type="button"
@@ -231,7 +235,7 @@ const Sidebar = (props) => {
           </button>
         </div>
 
-        {/* Drawer body (scrollable, scrollbar hidden) */}
+        {/* Drawer body */}
         <div
           className="h-[calc(100%-56px)] overflow-y-auto pt-6 pb-4"
           data-sb="scroll"
@@ -253,17 +257,25 @@ const Sidebar = (props) => {
         aria-label="Sidebar"
       >
         <div className="h-full flex flex-col w-full">
-          {/* Logo header */}
+          {/* Logo header: h-14 so borders align */}
           <div
-            className="flex items-center justify-center pt-6 pb-3 border-b"
+            className="flex items-center justify-center h-14 px-5 border-b"
             style={{ borderColor: asideStyle.borderColor }}
           >
-            <Link to={user ? '/dashboard' : '/'} className="navbar-brand" aria-label="Soundhive">
-              <img src={logoSrc} alt="Soundhive" className="w-32 h-auto" />
+            <Link to={user ? '/dashboard' : '/'} className="navbar-brand leading-[0]" aria-label="Soundhive">
+              <img
+                src={logoSrc}
+                alt="Soundhive"
+                className={[
+                  'block w-auto object-contain shrink-0',
+                  isBrand ? 'h-12' : 'h-9', // ⬅️ increased brand logo size
+                ].join(' ')}
+                style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
+              />
             </Link>
           </div>
 
-          {/* MAIN NAV (scrollable, scrollbar hidden) */}
+          {/* MAIN NAV */}
           <ul
             className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4"
             data-sb="scroll"
