@@ -18,6 +18,8 @@ import useLayoutStore from '../../store/LayoutStore';
 
 const ACCENT = '#4D3490';
 const BRAND_RGB = 'rgb(77, 52, 144)';
+const LOGO_LIGHT = '/assets/images/logo-dash.png';
+const LOGO_BRAND = '/assets/images/logo-white.png';
 
 const Sidebar = (props) => {
   const location = useLocation();
@@ -38,7 +40,7 @@ const Sidebar = (props) => {
   const closeSidebar =
     typeof props?.toggleSidebar === 'function' ? () => props.toggleSidebar() : storeClose;
 
-  const drawerRef = useRef(null); // <-- for outside-click detection
+  const drawerRef = useRef(null); // for outside-click detection
 
   const menuItems = [
     { title: 'Dashboard', path: '/dashboard', icon: MdSpaceDashboard },
@@ -101,8 +103,7 @@ const Sidebar = (props) => {
   // Close on route change (mobile)
   useEffect(() => {
     if (isOpen) closeSidebar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]);
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- Nav item with RIGHT-side active highlight & theme-aware colors ----------
   const NavItem = ({ title, path, icon: Icon }) => {
@@ -166,8 +167,25 @@ const Sidebar = (props) => {
     color: isBrand ? '#ffffff' : '#111827',
   };
 
+  const logoSrc = isBrand ? LOGO_BRAND : LOGO_LIGHT;
+
+  // HIDE scrollbars but keep scrollability (Firefox + legacy Edge)
+  const hideScrollInline = {
+    scrollbarWidth: 'none',   // Firefox
+    msOverflowStyle: 'none',  // IE/Edge (legacy)
+  };
+
+  const sbTheme = isBrand ? 'brand' : 'light'; // just a hook if you need it later
+
   return (
     <>
+      {/* component-scoped, inline CSS for WebKit to hide scrollbars */}
+      <style>{`
+        [data-sb="scroll"]::-webkit-scrollbar { width: 0; height: 0; }
+        [data-sb="scroll"]::-webkit-scrollbar-track { background: transparent; }
+        [data-sb="scroll"]::-webkit-scrollbar-thumb { background: transparent; }
+      `}</style>
+
       {/* Backdrop for mobile drawer */}
       {isOpen && (
         <div
@@ -197,13 +215,8 @@ const Sidebar = (props) => {
           className="flex items-center justify-between px-5 py-4 border-b"
           style={{ borderColor: asideStyle.borderColor }}
         >
-          <Link to={user ? '/dashboard' : '/'} className="navbar-brand" onClick={handleLinkClick}>
-            <img
-              src="/assets/images/logo-dash.png"
-              alt="Logo"
-              className="h-6 w-auto"
-              // style={{ filter: isBrand ? 'brightness(0) invert(1)' : 'none' }}
-            />
+          <Link to={user ? '/dashboard' : '/'} className="navbar-brand" onClick={handleLinkClick} aria-label="Soundhive">
+            <img src={logoSrc} alt="Soundhive" className="h-6 w-auto" />
           </Link>
           <button
             type="button"
@@ -218,8 +231,13 @@ const Sidebar = (props) => {
           </button>
         </div>
 
-        {/* Drawer body */}
-        <div className="h-[calc(100%-56px)] overflow-y-auto pt-6 pb-4">
+        {/* Drawer body (scrollable, scrollbar hidden) */}
+        <div
+          className="h-[calc(100%-56px)] overflow-y-auto pt-6 pb-4"
+          data-sb="scroll"
+          data-sb-theme={sbTheme}
+          style={hideScrollInline}
+        >
           <ul className="flex flex-col space-y-1 px-3">
             {menuItems.map((item) => (
               <NavItem key={item.path} {...item} />
@@ -240,18 +258,18 @@ const Sidebar = (props) => {
             className="flex items-center justify-center pt-6 pb-3 border-b"
             style={{ borderColor: asideStyle.borderColor }}
           >
-            <Link to={user ? '/dashboard' : '/'} className="navbar-brand">
-              <img
-                src="/assets/images/logo-dash.png"
-                alt="Logo"
-                className="w-32 h-auto"
-                // style={{ filter: isBrand ? 'brightness(0) invert(1)' : 'none' }}
-              />
+            <Link to={user ? '/dashboard' : '/'} className="navbar-brand" aria-label="Soundhive">
+              <img src={logoSrc} alt="Soundhive" className="w-32 h-auto" />
             </Link>
           </div>
 
-          {/* MAIN NAV */}
-          <ul className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4">
+          {/* MAIN NAV (scrollable, scrollbar hidden) */}
+          <ul
+            className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4"
+            data-sb="scroll"
+            data-sb-theme={sbTheme}
+            style={hideScrollInline}
+          >
             {menuItems.map((item) => (
               <NavItem key={item.path} {...item} />
             ))}

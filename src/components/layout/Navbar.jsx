@@ -1,4 +1,3 @@
-// src/components/layout/Navbar.jsx
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FiLogOut, FiBell, FiUser, FiMenu, FiX, FiSun, FiDroplet } from 'react-icons/fi';
@@ -6,6 +5,8 @@ import useAuthStore from '../../store/authStore';
 import useLayoutStore from '../../store/LayoutStore';
 
 const BRAND_RGB = 'rgb(77, 52, 144)';
+const LOGO_LIGHT = '/assets/images/logo-dash.png';
+const LOGO_BRAND = '/assets/images/logo-white.png';
 
 const Navbar = (props) => {
   const navigate = useNavigate();
@@ -73,15 +74,13 @@ const Navbar = (props) => {
           {isSidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
         </button>
 
-        {/* Center (lg: left) - optional logo */}
+        {/* Center (lg: left) - logo */}
         <div className="flex-1 flex justify-center lg:justify-start">
-          <Link to="/dashboard" className="hidden lg:inline-block">
+          <Link to="/dashboard" className="hidden lg:inline-block" aria-label="Soundhive">
             <img
-              src="/assets/images/logo-dash.png"
+              src={isBrand ? LOGO_BRAND : LOGO_LIGHT}
               alt="Soundhive"
               className="h-6 w-auto"
-              // If your logo is dark, you can uncomment the line below to make it visible on brand bg
-              // style={{ filter: isBrand ? 'brightness(0) invert(1)' : 'none' }}
             />
           </Link>
         </div>
