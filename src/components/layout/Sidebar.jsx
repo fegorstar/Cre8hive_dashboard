@@ -15,23 +15,25 @@ import { FiX } from 'react-icons/fi';
 import useAuthStore from '../../store/authStore';
 import useLayoutStore from '../../store/LayoutStore';
 
-const ACCENT = '#4D3490';
-const BRAND_RGB = 'rgb(77, 52, 144)';
-const LOGO_LIGHT = '/assets/images/logo-dash.png';
-const LOGO_BRAND = '/assets/images/logo-white.png';
+const ACCENT       = '#4D3490';
+const ACCENT_DARK  = '#3E2976';       // darker for the left bar in light theme
+const TINT         = '#F1ECFF';
+const BRAND_RGB    = 'rgb(77, 52, 144)';
+const LOGO_LIGHT   = '/assets/images/logo-dash.png';
+const LOGO_BRAND   = '/assets/images/logo-white.png';
 
 const Sidebar = (props) => {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
 
-  // Store (fallback when component is uncontrolled)
-  const storeOpen   = useLayoutStore((s) => s.sidebarOpen);
-  const storeClose  = useLayoutStore((s) => s.closeSidebar);
+  // Global store (uncontrolled mode)
+  const storeOpen  = useLayoutStore((s) => s.sidebarOpen);
+  const storeClose = useLayoutStore((s) => s.closeSidebar);
 
   const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
   const isBrand = uiTheme === 'brand';
 
-  // ---- Controlled vs uncontrolled (Dashboard passes isOpen + onCloseSidebar) ----
+  // Controlled if parent passes isOpen
   const controlled = typeof props?.isOpen === 'boolean';
   const isOpen     = controlled ? props.isOpen : storeOpen;
 
@@ -46,27 +48,27 @@ const Sidebar = (props) => {
   const drawerRef = useRef(null);
 
   const menuItems = [
-    { title: 'Dashboard', path: '/dashboard', icon: MdSpaceDashboard },
-    { title: 'Reports', path: '/reports', icon: MdOutlineBarChart },
-    { title: 'Investments', path: '/investments', icon: MdOutlineAttachMoney },
-    { title: 'Services', path: '/service-categories', icon: MdOutlineCategory },
-    { title: 'Reviews', path: '/reviews', icon: MdOutlinePeopleAlt },
-    { title: 'Creators', path: '/creators', icon: MdOutlineFolder },
-    { title: 'Users', path: '/members', icon: MdOutlinePeopleAlt },
-    { title: 'Transactions', path: '/transactions', icon: MdOutlineReceiptLong },
-    { title: 'Disputes', path: '/disputes', icon: MdOutlineGavel },
-    { title: 'Settings', path: '/settings', icon: MdOutlineSettings },
+    { title: 'Dashboard',    path: '/dashboard',        icon: MdSpaceDashboard },
+    { title: 'Reports',      path: '/reports',          icon: MdOutlineBarChart },
+    { title: 'Investments',  path: '/investments',      icon: MdOutlineAttachMoney },
+    { title: 'Services',     path: '/service-categories', icon: MdOutlineCategory },
+    { title: 'Reviews',      path: '/reviews',          icon: MdOutlinePeopleAlt },
+    { title: 'Creators',     path: '/creators',         icon: MdOutlineFolder },
+    { title: 'Users',        path: '/members',          icon: MdOutlinePeopleAlt },
+    { title: 'Transactions', path: '/transactions',     icon: MdOutlineReceiptLong },
+    { title: 'Disputes',     path: '/disputes',         icon: MdOutlineGavel },
+    { title: 'Settings',     path: '/settings',         icon: MdOutlineSettings },
   ];
 
-  // Title
+  // Page title
   useEffect(() => {
-    const found = menuItems.find(
-      (m) => location.pathname === m.path || location.pathname.startsWith(m.path + '/')
+    const found = menuItems.find(m =>
+      location.pathname === m.path || location.pathname.startsWith(m.path + '/')
     );
     document.title = `Soundhive — ${found ? found.title : 'Dashboard'}`;
   }, [location.pathname]); // eslint-disable-line
 
-  // Body scroll lock when open
+  // Lock body scroll when drawer is open
   useEffect(() => {
     if (!isOpen) return;
     const prev = document.body.style.overflow;
@@ -74,12 +76,10 @@ const Sidebar = (props) => {
     return () => { document.body.style.overflow = prev; };
   }, [isOpen]);
 
-  // Close on link click
-  const handleLinkClick = useCallback(() => {
-    if (isOpen) closeSidebar();
-  }, [isOpen, closeSidebar]);
+  // Close on link click (mobile)
+  const handleLinkClick = useCallback(() => { if (isOpen) closeSidebar(); }, [isOpen, closeSidebar]);
 
-  // Close on outside click (works for both controlled & uncontrolled)
+  // Outside click
   useEffect(() => {
     if (!isOpen) return;
     const onPointerDown = (e) => {
@@ -90,7 +90,7 @@ const Sidebar = (props) => {
     return () => document.removeEventListener('pointerdown', onPointerDown, { capture: true });
   }, [isOpen, closeSidebar]);
 
-  // Close on Esc
+  // ESC
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e) => { if (e.key === 'Escape') closeSidebar(); };
@@ -98,45 +98,54 @@ const Sidebar = (props) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, closeSidebar]);
 
-  // Close on route change
+  // Route change
   useEffect(() => { if (isOpen) closeSidebar(); }, [location.pathname]); // eslint-disable-line
 
-  // Active item with left accent
+  // ---- NavItem with THICK LEFT BAR ----
   const NavItem = ({ title, path, icon: Icon }) => {
     const active =
       location.pathname === path || location.pathname.startsWith(path + '/');
 
-    const base = 'group relative flex items-center rounded-md text-base font-medium transition-colors px-4 py-3 pr-6';
+    // more left padding to clear the bar
+    const base = 'group relative overflow-visible flex items-center rounded-xl text-base font-medium transition-colors pl-6 pr-6 py-3';
 
     const textCls = isBrand
       ? active
-        ? 'text-white bg-white/10'
+        ? 'text-white bg-white/15'
         : 'text-white/90 hover:text-white hover:bg-white/10'
       : active
-        ? 'bg-violet-50 text-[#4D3490]'
-        : 'text-[#667085] hover:bg-violet-50 hover:text-[#4D3490]';
+        ? 'text-[#4D3490] bg-[var(--active-tint)]'
+        : 'text-[#667085] hover:text-[#4D3490] hover:bg-[var(--active-tint)]';
 
     const iconCls = isBrand
       ? active ? 'text-white' : 'text-white/90 group-hover:text-white'
       : active ? 'text-[#4D3490]' : 'text-[#667085] group-hover:text-[#4D3490]';
 
-    const barColor = isBrand ? 'rgba(255,255,255,0.9)' : ACCENT;
+    // Left bar color (darker on light theme)
+    const barColor = isBrand ? 'rgba(255,255,255,0.98)' : ACCENT_DARK;
 
     return (
-      <li>
+      <li className="relative">
         <Link
           to={path}
           aria-current={active ? 'page' : undefined}
           onClick={handleLinkClick}
           className={[base, textCls].join(' ')}
+          style={!isBrand ? { ['--active-tint']: TINT } : undefined}
         >
+          {/* THICK, rounded, high z-index bar */}
           <span
             aria-hidden="true"
             className={[
-              'pointer-events-none absolute left-0 top-0 bottom-0 w-[3px]',
-              active ? '' : 'opacity-0 group-hover:opacity-40 transition-opacity',
+              'pointer-events-none absolute left-0 top-1 bottom-1 w-[10px] rounded-full z-10',
+              active ? 'opacity-100' : 'opacity-60 group-hover:opacity-90 transition-opacity',
             ].join(' ')}
-            style={{ background: barColor, borderTopRightRadius: 6, borderBottomRightRadius: 6 }}
+            style={{
+              background: barColor,
+              boxShadow: isBrand
+                ? '0 0 0 2px rgba(255,255,255,0.18)'
+                : '0 0 0 2px rgba(62,41,118,0.12)',
+            }}
           />
           {Icon ? <Icon className={['mr-3 h-5 w-5 transition-colors', iconCls].join(' ')} /> : null}
           <span className="truncate">{title}</span>
@@ -157,11 +166,17 @@ const Sidebar = (props) => {
 
   return (
     <>
+      {/* Hide WebKit scrollbars */}
       <style>{`
         [data-sb="scroll"]::-webkit-scrollbar { width: 0; height: 0; }
         [data-sb="scroll"]::-webkit-scrollbar-track { background: transparent; }
         [data-sb="scroll"]::-webkit-scrollbar-thumb { background: transparent; }
       `}</style>
+
+      {/* Backdrop (only when uncontrolled) */}
+      {isOpen && !controlled && (
+        <div className="fixed inset-0 z-50 bg-black/40 lg:hidden" onClick={closeSidebar} aria-hidden="true" />
+      )}
 
       {/* Mobile drawer */}
       <aside
@@ -177,7 +192,7 @@ const Sidebar = (props) => {
         aria-modal="true"
         aria-label="Mobile Sidebar"
         tabIndex={-1}
-        onPointerDown={(e) => e.stopPropagation()} // keep clicks inside from closing
+        onPointerDown={(e) => e.stopPropagation()}
       >
         {/* Drawer header */}
         <div className="flex items-center justify-between h-14 px-5 border-b" style={{ borderColor: asideStyle.borderColor }}>
@@ -218,6 +233,7 @@ const Sidebar = (props) => {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex fixed left-0 top-0 h-full w-64 border-r z-20" style={asideStyle} aria-label="Sidebar">
         <div className="h-full flex flex-col w-full">
+          {/* Logo header */}
           <div className="flex items-center justify-center h-14 px-5 border-b" style={{ borderColor: asideStyle.borderColor }}>
             <Link to={user ? '/dashboard' : '/'} className="navbar-brand leading-[0]" aria-label="Soundhive">
               <img
@@ -229,7 +245,13 @@ const Sidebar = (props) => {
             </Link>
           </div>
 
-          <ul className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4" data-sb="scroll" data-sb-theme={sbTheme} style={hideScrollInline}>
+          {/* MAIN NAV */}
+          <ul
+            className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4"
+            data-sb="scroll"
+            data-sb-theme={sbTheme}
+            style={hideScrollInline}
+          >
             {menuItems.map((item) => <NavItem key={item.path} {...item} />)}
           </ul>
         </div>
