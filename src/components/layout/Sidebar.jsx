@@ -24,22 +24,26 @@ const Sidebar = (props) => {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
 
-  // Store state (fallback if props not passed)
+  // Store (fallback when component is uncontrolled)
   const storeOpen   = useLayoutStore((s) => s.sidebarOpen);
-  const storeToggle = useLayoutStore((s) => s.toggleSidebar);
   const storeClose  = useLayoutStore((s) => s.closeSidebar);
 
   const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
   const isBrand = uiTheme === 'brand';
 
-  const isOpen =
-    typeof props?.isOpen === 'boolean' ? props.isOpen : storeOpen;
-  const toggleSidebar =
-    typeof props?.toggleSidebar === 'function' ? props.toggleSidebar : storeToggle;
-  const closeSidebar =
-    typeof props?.toggleSidebar === 'function' ? () => props.toggleSidebar() : storeClose;
+  // ---- Controlled vs uncontrolled (Dashboard passes isOpen + onCloseSidebar) ----
+  const controlled = typeof props?.isOpen === 'boolean';
+  const isOpen     = controlled ? props.isOpen : storeOpen;
 
-  const drawerRef = useRef(null); // for outside-click detection
+  const closeSidebar = useCallback(() => {
+    if (controlled && typeof props?.onCloseSidebar === 'function') {
+      props.onCloseSidebar();
+    } else {
+      storeClose();
+    }
+  }, [controlled, props?.onCloseSidebar, storeClose]);
+
+  const drawerRef = useRef(null);
 
   const menuItems = [
     { title: 'Dashboard', path: '/dashboard', icon: MdSpaceDashboard },
@@ -54,31 +58,28 @@ const Sidebar = (props) => {
     { title: 'Settings', path: '/settings', icon: MdOutlineSettings },
   ];
 
-  // -------- Update tab title on route change --------
+  // Title
   useEffect(() => {
     const found = menuItems.find(
       (m) => location.pathname === m.path || location.pathname.startsWith(m.path + '/')
     );
     document.title = `Soundhive — ${found ? found.title : 'Dashboard'}`;
-  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname]); // eslint-disable-line
 
-  // -------- Disable body scroll when mobile drawer is open --------
+  // Body scroll lock when open
   useEffect(() => {
-    if (isOpen) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = prev;
-      };
-    }
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
   }, [isOpen]);
 
-  // -------- Close drawer on link click / backdrop / ESC (mobile) --------
+  // Close on link click
   const handleLinkClick = useCallback(() => {
     if (isOpen) closeSidebar();
   }, [isOpen, closeSidebar]);
 
-  // document-level outside click
+  // Close on outside click (works for both controlled & uncontrolled)
   useEffect(() => {
     if (!isOpen) return;
     const onPointerDown = (e) => {
@@ -89,22 +90,18 @@ const Sidebar = (props) => {
     return () => document.removeEventListener('pointerdown', onPointerDown, { capture: true });
   }, [isOpen, closeSidebar]);
 
-  // ESC to close
+  // Close on Esc
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e) => {
-      if (e.key === 'Escape') closeSidebar();
-    };
+    const onKey = (e) => { if (e.key === 'Escape') closeSidebar(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, closeSidebar]);
 
-  // Close on route change (mobile)
-  useEffect(() => {
-    if (isOpen) closeSidebar();
-  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Close on route change
+  useEffect(() => { if (isOpen) closeSidebar(); }, [location.pathname]); // eslint-disable-line
 
-  // ---------- Nav item with LEFT-side active highlight ----------
+  // Active item with left accent
   const NavItem = ({ title, path, icon: Icon }) => {
     const active =
       location.pathname === path || location.pathname.startsWith(path + '/');
@@ -113,19 +110,15 @@ const Sidebar = (props) => {
 
     const textCls = isBrand
       ? active
-        ? 'text-white bg-white/20'
+        ? 'text-white bg-white/10'
         : 'text-white/90 hover:text-white hover:bg-white/10'
       : active
         ? 'bg-violet-50 text-[#4D3490]'
         : 'text-[#667085] hover:bg-violet-50 hover:text-[#4D3490]';
 
     const iconCls = isBrand
-      ? active
-        ? 'text-white'
-        : 'text-white/90 group-hover:text-white'
-      : active
-        ? 'text-[#4D3490]'
-        : 'text-[#667085] group-hover:text-[#4D3490]';
+      ? active ? 'text-white' : 'text-white/90 group-hover:text-white'
+      : active ? 'text-[#4D3490]' : 'text-[#667085] group-hover:text-[#4D3490]';
 
     const barColor = isBrand ? 'rgba(255,255,255,0.9)' : ACCENT;
 
@@ -137,27 +130,21 @@ const Sidebar = (props) => {
           onClick={handleLinkClick}
           className={[base, textCls].join(' ')}
         >
+          <span
+            aria-hidden="true"
+            className={[
+              'pointer-events-none absolute left-0 top-0 bottom-0 w-[3px]',
+              active ? '' : 'opacity-0 group-hover:opacity-40 transition-opacity',
+            ].join(' ')}
+            style={{ background: barColor, borderTopRightRadius: 6, borderBottomRightRadius: 6 }}
+          />
           {Icon ? <Icon className={['mr-3 h-5 w-5 transition-colors', iconCls].join(' ')} /> : null}
-          <span>{title}</span>
-
-          {active && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-0 top-2 bottom-2 w-1.5 rounded-r-full"
-              style={{
-                background: barColor,
-                boxShadow: isBrand
-                  ? '0 0 0 2px rgba(255,255,255,0.18)'
-                  : '0 0 0 2px rgba(77,52,144,0.12)',
-              }}
-            />
-          )}
+          <span className="truncate">{title}</span>
         </Link>
       </li>
     );
   };
 
-  // Shared container styles
   const asideStyle = {
     backgroundColor: isBrand ? BRAND_RGB : '#ffffff',
     borderColor: isBrand ? 'rgba(255,255,255,0.2)' : '#E5E7EB',
@@ -165,7 +152,6 @@ const Sidebar = (props) => {
   };
 
   const logoSrc = isBrand ? LOGO_BRAND : LOGO_LIGHT;
-
   const hideScrollInline = { scrollbarWidth: 'none', msOverflowStyle: 'none' };
   const sbTheme = isBrand ? 'brand' : 'light';
 
@@ -177,22 +163,13 @@ const Sidebar = (props) => {
         [data-sb="scroll"]::-webkit-scrollbar-thumb { background: transparent; }
       `}</style>
 
-      {/* Backdrop for mobile drawer */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
-          onClick={closeSidebar}
-          aria-hidden="true"
-        />
-      )}
-
       {/* Mobile drawer */}
       <aside
         ref={drawerRef}
         id="mobile-sidebar"
         className={[
-          'fixed left-0 top-0 h-full w-[82vw] max-w-[18rem] border-r z-50 shadow-xl',
-          'transition-transform duration-200 lg:hidden',
+          'fixed left-0 top-0 h-full w-[82vw] max-w-[18rem] border-r z-[60] shadow-xl',
+          'will-change-transform transform-gpu transition-transform duration-200 lg:hidden',
           isOpen ? 'translate-x-0' : '-translate-x-full',
         ].join(' ')}
         style={asideStyle}
@@ -200,31 +177,21 @@ const Sidebar = (props) => {
         aria-modal="true"
         aria-label="Mobile Sidebar"
         tabIndex={-1}
+        onPointerDown={(e) => e.stopPropagation()} // keep clicks inside from closing
       >
-        {/* Drawer header: h-14 to align with navbar */}
-        <div
-          className="flex items-center justify-between h-14 px-5 border-b"
-          style={{ borderColor: asideStyle.borderColor }}
-        >
-          <Link
-            to={user ? '/dashboard' : '/'}
-            className="navbar-brand leading-[0]"
-            onClick={handleLinkClick}
-            aria-label="Soundhive"
-          >
+        {/* Drawer header */}
+        <div className="flex items-center justify-between h-14 px-5 border-b" style={{ borderColor: asideStyle.borderColor }}>
+          <Link to={user ? '/dashboard' : '/'} className="navbar-brand leading-[0]" onClick={handleLinkClick} aria-label="Soundhive">
             <img
               src={logoSrc}
               alt="Soundhive"
-              className={[
-                'block w-auto object-contain shrink-0',
-                isBrand ? 'h-12' : 'h-9', // ⬅️ increased brand logo size
-              ].join(' ')}
+              className={['block w-auto object-contain shrink-0', isBrand ? 'h-12' : 'h-9'].join(' ')}
               style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
             />
           </Link>
           <button
             type="button"
-            onClick={closeSidebar}
+            onClick={(e) => { e.stopPropagation(); closeSidebar(); }}
             className={[
               'inline-flex items-center justify-center w-9 h-9 rounded-md border',
               isBrand ? 'border-white/25 hover:bg-white/10 text-white' : 'border-gray-300 hover:bg-gray-100 text-gray-700',
@@ -237,54 +204,33 @@ const Sidebar = (props) => {
 
         {/* Drawer body */}
         <div
-          className="h-[calc(100%-56px)] overflow-y-auto pt-6 pb-4"
+          className="h-[calc(100%-56px)] overflow-y-auto pt-6 pb-4 overscroll-contain"
           data-sb="scroll"
           data-sb-theme={sbTheme}
           style={hideScrollInline}
         >
           <ul className="flex flex-col space-y-1 px-3">
-            {menuItems.map((item) => (
-              <NavItem key={item.path} {...item} />
-            ))}
+            {menuItems.map((item) => <NavItem key={item.path} {...item} />)}
           </ul>
         </div>
       </aside>
 
       {/* Desktop sidebar */}
-      <aside
-        className="hidden lg:flex fixed left-0 top-0 h-full w-64 border-r z-20"
-        style={asideStyle}
-        aria-label="Sidebar"
-      >
+      <aside className="hidden lg:flex fixed left-0 top-0 h-full w-64 border-r z-20" style={asideStyle} aria-label="Sidebar">
         <div className="h-full flex flex-col w-full">
-          {/* Logo header: h-14 so borders align */}
-          <div
-            className="flex items-center justify-center h-14 px-5 border-b"
-            style={{ borderColor: asideStyle.borderColor }}
-          >
+          <div className="flex items-center justify-center h-14 px-5 border-b" style={{ borderColor: asideStyle.borderColor }}>
             <Link to={user ? '/dashboard' : '/'} className="navbar-brand leading-[0]" aria-label="Soundhive">
               <img
                 src={logoSrc}
                 alt="Soundhive"
-                className={[
-                  'block w-auto object-contain shrink-0',
-                  isBrand ? 'h-12' : 'h-9', // ⬅️ increased brand logo size
-                ].join(' ')}
+                className={['block w-auto object-contain shrink-0', isBrand ? 'h-12' : 'h-9'].join(' ')}
                 style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
               />
             </Link>
           </div>
 
-          {/* MAIN NAV */}
-          <ul
-            className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4"
-            data-sb="scroll"
-            data-sb-theme={sbTheme}
-            style={hideScrollInline}
-          >
-            {menuItems.map((item) => (
-              <NavItem key={item.path} {...item} />
-            ))}
+          <ul className="flex-1 overflow-y-auto flex flex-col space-y-1 px-3 pt-6 pb-4" data-sb="scroll" data-sb-theme={sbTheme} style={hideScrollInline}>
+            {menuItems.map((item) => <NavItem key={item.path} {...item} />)}
           </ul>
         </div>
       </aside>

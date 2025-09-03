@@ -15,8 +15,8 @@ const Navbar = (props) => {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
 
-  // Layout (fallbacks if props aren’t passed)
-  const storeSidebarOpen = useLayoutStore((s) => s.sidebarOpen);
+  // Store fallbacks
+  const storeSidebarOpen   = useLayoutStore((s) => s.sidebarOpen);
   const storeToggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
   // Theme
@@ -24,10 +24,23 @@ const Navbar = (props) => {
   const toggleTheme = useLayoutStore((s) => s.toggleTheme);
   const isBrand = uiTheme === 'brand';
 
-  const isSidebarOpen =
-    typeof props?.isSidebarOpen === 'boolean' ? props.isSidebarOpen : storeSidebarOpen;
-  const toggleSidebar =
-    typeof props?.toggleSidebar === 'function' ? props.toggleSidebar : storeToggleSidebar;
+  // --- Prop compatibility layer (supports both prop name sets) ---
+  const propOpen =
+    typeof props?.isSidebarOpen === 'boolean'
+      ? props.isSidebarOpen
+      : typeof props?.mobileSidebarOpen === 'boolean'
+      ? props.mobileSidebarOpen
+      : undefined;
+
+  const propToggle =
+    typeof props?.toggleSidebar === 'function'
+      ? props.toggleSidebar
+      : typeof props?.onToggleSidebar === 'function'
+      ? props.onToggleSidebar
+      : undefined;
+
+  const isSidebarOpen = typeof propOpen === 'boolean' ? propOpen : storeSidebarOpen;
+  const toggleSidebar = propToggle || storeToggleSidebar;
 
   const handleLogout = () => {
     logout();
@@ -48,6 +61,8 @@ const Navbar = (props) => {
       : 'border-gray-300 hover:bg-gray-100 text-gray-700',
   ].join(' ');
 
+  const logoSrc = isBrand ? LOGO_BRAND : LOGO_LIGHT;
+
   return (
     <div className="header">
       <nav
@@ -63,7 +78,11 @@ const Navbar = (props) => {
         {/* Mobile hamburger / X */}
         <button
           type="button"
-          onClick={toggleSidebar}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation(); // avoid outside-click handlers
+            toggleSidebar();
+          }}
           className={[
             'lg:hidden',
             'inline-flex items-center justify-center w-10 h-10 rounded-md border',
@@ -78,22 +97,17 @@ const Navbar = (props) => {
           {isSidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
         </button>
 
-        {/* Brand area */}
+        {/* Brand area: hidden on mobile (logo lives in drawer), visible on desktop */}
         <div className="flex-1 min-w-0 flex items-center">
-          {/* MOBILE: logo hidden (drawer shows it). */}
-          {/* DESKTOP: show logo; brand logo slightly larger for optical match. */}
           <Link
             to="/dashboard"
             aria-label="Soundhive"
             className="hidden lg:flex items-center leading-[0]"
           >
             <img
-              src={isBrand ? LOGO_BRAND : LOGO_LIGHT}
+              src={logoSrc}
               alt="Soundhive"
-              className={[
-                'block w-auto object-contain shrink-0',
-                isBrand ? 'h-12' : 'h-9', // ⬅️ increased brand logo size
-              ].join(' ')}
+              className={['block w-auto object-contain shrink-0', isBrand ? 'h-12' : 'h-9'].join(' ')}
               style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
             />
           </Link>
@@ -164,11 +178,7 @@ const Navbar = (props) => {
             >
               <div className="w-10 h-10 relative">
                 {user?.profile_image ? (
-                  <img
-                    alt="avatar"
-                    src={user.profile_image}
-                    className="rounded-full w-10 h-10 object-cover"
-                  />
+                  <img alt="avatar" src={user.profile_image} className="rounded-full w-10 h-10 object-cover" />
                 ) : (
                   <div
                     className={[
@@ -185,9 +195,7 @@ const Navbar = (props) => {
                 <span className={['font-semibold', isBrand ? 'text-white' : 'text-gray-800'].join(' ')}>
                   {user?.first_name} {user?.last_name}
                 </span>
-                <span className={isBrand ? 'text-white/80 text-sm' : 'text-gray-500 text-sm'}>
-                  {user?.email}
-                </span>
+                <span className={isBrand ? 'text-white/80 text-sm' : 'text-gray-500 text-sm'}>{user?.email}</span>
               </div>
             </a>
             <div className="dropdown-menu dropdown-menu-end p-2 absolute z-50" aria-labelledby="dropdownUser">

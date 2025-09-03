@@ -17,10 +17,7 @@ import {
   Legend,
 } from "chart.js";
 
-/**
- * Register only what we use to keep bundle light.
- * Your Reports view also does targeted registration.
- */
+// Register only what we use
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -34,35 +31,18 @@ ChartJS.register(
 const BRAND = "#4D3490";
 
 const Dashboard = () => {
-  /**
-   * Auth: follow the same pattern you already use elsewhere.
-   * If there is no token, bounce to "/".
-   */
+  // Auth guard
   const navigate = useNavigate();
   const { token } = useAuthStore((s) => s);
-
   useEffect(() => {
     if (!token) navigate("/");
   }, [token, navigate]);
 
-  /**
-   * Sidebar open state (mobile only). On lg+ it’s always visible,
-   * but we still keep this state to drive the overlay & hamburger.
-   */
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const toggleSidebar = () => setSidebarOpen((v) => !v);
-  const closeSidebar = () => setSidebarOpen(false);
-
-  /**
-   * Tabs & filters
-   */
+  // Tabs & filters
   const [activeTab, setActiveTab] = useState("deposits"); // 'deposits' | 'withdrawals'
   const [selectedPeriod, setSelectedPeriod] = useState("Today");
 
-  /**
-   * Demo transactions (replace with API data when ready).
-   * Table shape and chips mirror the screenshot + your other tables.
-   */
+  // Demo data
   const transactions = useMemo(
     () => [
       {
@@ -114,34 +94,17 @@ const Dashboard = () => {
     [transactions, activeTab]
   );
 
-  /**
-   * Chart: simple inflow/outflow datasets
-   * Matches the time labels in the mock and keeps y-axis legible (K/M).
-   */
-  const [chartData, setChartData] = useState({
-    labels: [],
-    datasets: [],
-  });
-
+  // Chart data
+  const [chartData, setChartData] = useState({ labels: [], datasets: [] });
   useEffect(() => {
-    // mock fetch for the chart – swap to real API when ready
     const fetchTransactionData = async () => ({
       inflow: [500000, 1200000, 1500000, 2500000, 2900000, 3000000, 3200000],
       outflow: [100000, 300000, 700000, 1500000, 1800000, 2400000, 2600000],
     });
-
     (async () => {
       const data = await fetchTransactionData();
       setChartData({
-        labels: [
-          "12:00am",
-          "4:00am",
-          "8:00am",
-          "12:00pm",
-          "4:00pm",
-          "8:00pm",
-          "11:59pm",
-        ],
+        labels: ["12:00am", "4:00am", "8:00am", "12:00pm", "4:00pm", "8:00pm", "11:59pm"],
         datasets: [
           {
             label: "Inflow",
@@ -194,24 +157,15 @@ const Dashboard = () => {
   return (
     <main>
       <div id="app-layout" className="overflow-x-hidden flex bg-white border-t border-gray-300">
-        {/* Sidebar (controlled on mobile by sidebarOpen) */}
-        <Sidebar isOpen={sidebarOpen} />
-
-        {/* Mobile overlay to close the sidebar by clicking outside */}
-        <button
-          aria-label="Close sidebar"
-          onClick={closeSidebar}
-          className={`fixed inset-0 bg-black/30 lg:hidden transition-opacity ${
-            sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
-        />
+        {/* Sidebar: now fully driven by global LayoutStore */}
+        <Sidebar />
 
         <div
           id="app-layout-content"
-          className="relative min-h-screen w-full min-w-[100vw] md:min-w-0 ml-[15.625rem] [transition:margin_0.25s_ease-out]"
+          className="relative min-h-screen w-full md:min-w-0 lg:ml-64 [transition:margin_0.25s_ease-out]"
         >
-          {/* Navbar – pass toggle + state so hamburger reflects reality */}
-          <Navbar onToggleSidebar={toggleSidebar} mobileSidebarOpen={sidebarOpen} />
+          {/* Navbar: uses global store; no props needed */}
+          <Navbar />
 
           <div className="px-6 pb-20 pt-6">
             {/* Page header */}
@@ -282,7 +236,7 @@ const Dashboard = () => {
                 <button
                   className={`px-6 py-2 font-semibold border ${
                     activeTab === "deposits"
-                      ? "text-[${BRAND}] text-purple-600 bg-gray-200 rounded-l-full border-gray-200"
+                      ? "text-purple-600 bg-gray-200 rounded-l-full border-gray-200"
                       : "text-black bg-transparent rounded-l-full border-gray-300"
                   }`}
                   onClick={() => setActiveTab("deposits")}
@@ -349,7 +303,6 @@ const Dashboard = () => {
                     </tr>
                   ))}
 
-                  {/* Graceful empty state */}
                   {filteredTransactions.length === 0 && (
                     <tr>
                       <td colSpan={7} className="px-6 py-6 text-center text-sm text-gray-500">
