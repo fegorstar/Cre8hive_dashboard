@@ -4,25 +4,28 @@ import { FiLogOut, FiBell, FiUser, FiMenu, FiX, FiSun, FiDroplet } from 'react-i
 import useAuthStore from '../../store/authStore';
 import useLayoutStore from '../../store/LayoutStore';
 
-const BRAND_RGB = 'rgb(77, 52, 144)';
-const LOGO_LIGHT = '/assets/images/logo-dash.png';
-const LOGO_BRAND = '/assets/images/logo-white.png';
+const BRAND_RGB  = 'rgb(77, 52, 144)';
+const LOGO_LIGHT = '/assets/images/Crea8Hive-Logo.png';
+const LOGO_BRAND = '/assets/images/Crea8Hive-Logo-white.png';
+
+// SAME size for both logos to avoid jump on theme switch
+const LOGO_SIZE_CLASSES = 'block w-auto h-10 object-contain shrink-0';
 
 const Navbar = (props) => {
   const navigate = useNavigate();
 
   // Auth
-  const user = useAuthStore((s) => s.user);
+  const user   = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
 
-  // Store fallbacks
+  // Layout / Sidebar
   const storeSidebarOpen   = useLayoutStore((s) => s.sidebarOpen);
   const storeToggleSidebar = useLayoutStore((s) => s.toggleSidebar);
 
   // Theme
-  const uiTheme = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
+  const uiTheme     = useLayoutStore((s) => s.uiTheme); // 'light' | 'brand'
   const toggleTheme = useLayoutStore((s) => s.toggleTheme);
-  const isBrand = uiTheme === 'brand';
+  const isBrand     = uiTheme === 'brand';
 
   // --- Prop compatibility layer (supports both prop name sets) ---
   const propOpen =
@@ -80,7 +83,7 @@ const Navbar = (props) => {
           type="button"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
-            e.stopPropagation(); // avoid outside-click handlers
+            e.stopPropagation();
             toggleSidebar();
           }}
           className={[
@@ -97,7 +100,7 @@ const Navbar = (props) => {
           {isSidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
         </button>
 
-        {/* Brand area: hidden on mobile (logo lives in drawer), visible on desktop */}
+        {/* Brand area: hidden on mobile, visible on desktop */}
         <div className="flex-1 min-w-0 flex items-center">
           <Link
             to="/dashboard"
@@ -107,7 +110,7 @@ const Navbar = (props) => {
             <img
               src={logoSrc}
               alt="Soundhive"
-              className={['block w-auto object-contain shrink-0', isBrand ? 'h-12' : 'h-9'].join(' ')}
+              className={LOGO_SIZE_CLASSES}  // SAME size both themes
               style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
             />
           </Link>
@@ -152,6 +155,7 @@ const Navbar = (props) => {
             </div>
           </li>
 
+          {/* THEME ICON BUTTON (back to original) */}
           <li className="ml-2">
             <button
               type="button"

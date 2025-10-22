@@ -16,11 +16,14 @@ import useAuthStore from '../../store/authStore';
 import useLayoutStore from '../../store/LayoutStore';
 
 const ACCENT       = '#4D3490';
-const ACCENT_DARK  = '#3E2976';       // darker for the left bar in light theme
+const ACCENT_DARK  = '#3E2976';
 const TINT         = '#F1ECFF';
 const BRAND_RGB    = 'rgb(77, 52, 144)';
 const LOGO_LIGHT   = '/assets/images/logo-dash.png';
 const LOGO_BRAND   = '/assets/images/logo-white.png';
+
+// SAME size for both logos (mobile + desktop)
+const LOGO_SIZE_CLASSES = 'block w-auto h-10 object-contain shrink-0';
 
 const Sidebar = (props) => {
   const location = useLocation();
@@ -48,16 +51,16 @@ const Sidebar = (props) => {
   const drawerRef = useRef(null);
 
   const menuItems = [
-    { title: 'Dashboard',    path: '/dashboard',        icon: MdSpaceDashboard },
-    { title: 'Reports',      path: '/reports',          icon: MdOutlineBarChart },
-    { title: 'Investments',  path: '/investments',      icon: MdOutlineAttachMoney },
+    { title: 'Dashboard',    path: '/dashboard',          icon: MdSpaceDashboard },
+    { title: 'Reports',      path: '/reports',            icon: MdOutlineBarChart },
+    { title: 'Investments',  path: '/investments',        icon: MdOutlineAttachMoney },
     { title: 'Services',     path: '/service-categories', icon: MdOutlineCategory },
-    { title: 'Reviews',      path: '/reviews',          icon: MdOutlinePeopleAlt },
-    { title: 'Creators',     path: '/creators',         icon: MdOutlineFolder },
-    { title: 'Users',        path: '/members',          icon: MdOutlinePeopleAlt },
-    { title: 'Transactions', path: '/transactions',     icon: MdOutlineReceiptLong },
-    { title: 'Disputes',     path: '/disputes',         icon: MdOutlineGavel },
-    { title: 'Settings',     path: '/settings',         icon: MdOutlineSettings },
+    { title: 'Reviews',      path: '/reviews',            icon: MdOutlinePeopleAlt },
+    { title: 'Creators',     path: '/creators',           icon: MdOutlineFolder },
+    { title: 'Users',        path: '/members',            icon: MdOutlinePeopleAlt },
+    { title: 'Transactions', path: '/transactions',       icon: MdOutlineReceiptLong },
+    { title: 'Disputes',     path: '/disputes',           icon: MdOutlineGavel },
+    { title: 'Settings',     path: '/settings',           icon: MdOutlineSettings },
   ];
 
   // Page title
@@ -106,7 +109,6 @@ const Sidebar = (props) => {
     const active =
       location.pathname === path || location.pathname.startsWith(path + '/');
 
-    // more left padding to clear the bar
     const base = 'group relative overflow-visible flex items-center rounded-xl text-base font-medium transition-colors pl-6 pr-6 py-3';
 
     const textCls = isBrand
@@ -121,8 +123,7 @@ const Sidebar = (props) => {
       ? active ? 'text-white' : 'text-white/90 group-hover:text-white'
       : active ? 'text-[#4D3490]' : 'text-[#667085] group-hover:text-[#4D3490]';
 
-    // Left bar color (darker on light theme)
-    const barColor = isBrand ? 'rgba(255,255,255,0.98)' : ACCENT_DARK;
+    const barColor = isBrand ? 'rgba(255,255,255,0.98)' : '#3E2976';
 
     return (
       <li className="relative">
@@ -133,7 +134,6 @@ const Sidebar = (props) => {
           className={[base, textCls].join(' ')}
           style={!isBrand ? { ['--active-tint']: TINT } : undefined}
         >
-          {/* THICK, rounded, high z-index bar */}
           <span
             aria-hidden="true"
             className={[
@@ -166,7 +166,6 @@ const Sidebar = (props) => {
 
   return (
     <>
-      {/* Hide WebKit scrollbars */}
       <style>{`
         [data-sb="scroll"]::-webkit-scrollbar { width: 0; height: 0; }
         [data-sb="scroll"]::-webkit-scrollbar-track { background: transparent; }
@@ -200,7 +199,7 @@ const Sidebar = (props) => {
             <img
               src={logoSrc}
               alt="Soundhive"
-              className={['block w-auto object-contain shrink-0', isBrand ? 'h-12' : 'h-9'].join(' ')}
+              className={LOGO_SIZE_CLASSES}  // SAME size both themes
               style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
             />
           </Link>
@@ -239,7 +238,7 @@ const Sidebar = (props) => {
               <img
                 src={logoSrc}
                 alt="Soundhive"
-                className={['block w-auto object-contain shrink-0', isBrand ? 'h-12' : 'h-9'].join(' ')}
+                className={LOGO_SIZE_CLASSES}  // SAME size both themes
                 style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
               />
             </Link>

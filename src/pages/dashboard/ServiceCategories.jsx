@@ -1,5 +1,6 @@
 // src/pages/ServiceCategories/ServiceCategories.jsx
 // Complete, filter-accurate subcategory pagination (client-side over fully loaded list)
+// Now includes "description" field for Categories (create/update + view)
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -113,11 +114,15 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
   const isSub = type === "subcategory";
   const safeCategories = Array.isArray(categories) ? categories : [];
 
+  // state
   const [name, setName] = useState(record?.name ?? "");
+  const [description, setDescription] = useState(record?.description ?? ""); // NEW: description for categories
   const [parentCategoryId, setParentCategoryId] = useState(record?.parentCategoryId ?? "");
 
+  // sync when record changes
   useEffect(() => {
     setName(record?.name ?? "");
+    setDescription(record?.description ?? "");
     setParentCategoryId(record?.parentCategoryId ?? "");
   }, [record]);
 
@@ -135,7 +140,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
                       ?.name || "—",
                 },
               ]
-            : []),
+            : [{ label: "Description", value: record?.description || "—" }]),
           { label: "Created", value: record?.createdAtReadable || "—" },
           { label: "Updated", value: record?.updatedAtReadable || "—" },
         ]}
@@ -148,10 +153,13 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
       className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
-        const payload = isSub ? { name, parentCategoryId: Number(parentCategoryId) } : { name };
+        const payload = isSub
+          ? { name, parentCategoryId: Number(parentCategoryId) }
+          : { name, description: (description || "").trim() }; // pass description up
         onSubmit(payload);
       }}
     >
+      {/* Name */}
       <div>
         <label className="block text-sm font-medium mb-1">
           {isSub ? "Subcategory Name" : "Category Name"}
@@ -166,6 +174,21 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
         />
       </div>
 
+      {/* Description (categories only) */}
+      {!isSub && (
+        <div>
+          <label className="block text-sm font-medium mb-1">Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className={`${inputBase} min-h-[96px]`}
+            placeholder="Short summary/description of this category"
+            required
+          />
+        </div>
+      )}
+
+      {/* Parent Category (subcategories only) */}
       {isSub && (
         <div>
           <label className="block text-sm font-medium mb-1">Category</label>
@@ -416,7 +439,6 @@ const ServiceCategories = () => {
 
   // precise table loaders
   const [catsLoading, setCatsLoading] = useState(false);
-
   const [catsPage, setCatsPage] = useState(1);
 
   useEffect(() => {
@@ -669,10 +691,10 @@ const ServiceCategories = () => {
         await fetchAllSubCategories(); // refresh full list so totals/pages are correct
       } else {
         if (modalMode === "edit" && modalRecord?.id) {
-          await updateCategory(modalRecord.id, payload);
+          await updateCategory(modalRecord.id, payload); // payload includes description
           toast.add({ type: "success", title: "Updated", message: "Category updated successfully." });
         } else {
-          await createCategory(payload);
+          await createCategory(payload); // payload includes description
           toast.add({ type: "success", title: "Created", message: "Category created successfully." });
         }
         try {

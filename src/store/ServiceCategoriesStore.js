@@ -1,6 +1,7 @@
 // src/store/ServiceCategoriesStore.js
 // Admin Service Categories & Subcategories store
-// Now supports full-list fetching for subcategories to enable accurate client-side pagination/totals per filter.
+// Now supports full-list fetching for subcategories (client pagination) and
+// includes Category.description in models + create/update payloads.
 
 import { create } from "zustand";
 import api from "../lib/apiClient";
@@ -97,6 +98,7 @@ const toInt = (v) => {
 const decorateCategory = (raw = {}) => ({
   id: Number(raw.id),
   name: raw.category_name ?? raw.name ?? "",
+  description: raw.description ?? raw.category_description ?? raw.desc ?? "", // NEW
   createdAtReadable: formatReadableDate(raw.created_at || raw.createdAt),
   updatedAtReadable: formatReadableDate(raw.updated_at || raw.updatedAt),
 });
@@ -342,10 +344,14 @@ const useServiceCategoriesStore = create((set, get) => ({
 
   /* --------- CREATE / UPDATE / DELETE: Category --------- */
 
-  createCategory: async ({ name }) => {
+  // Accepts { name, description }
+  createCategory: async ({ name, description }) => {
     set({ loading: true, error: null });
     try {
-      const payload = { category_name: (name || "").trim() };
+      const payload = {
+        category_name: (name || "").trim(),
+        description: (description || "").trim(), // REQUIRED by backend
+      };
       await api.post(`/admin/category/create`, payload);
 
       const cur = get().categoriesMeta.currentPage || 1;
@@ -365,10 +371,14 @@ const useServiceCategoriesStore = create((set, get) => ({
     }
   },
 
-  updateCategory: async (id, { name }) => {
+  // Accepts { name, description }
+  updateCategory: async (id, { name, description }) => {
     set({ loading: true, error: null });
     try {
-      const payload = { category_name: (name || "").trim() };
+      const payload = {
+        category_name: (name || "").trim(),
+        description: (description || "").trim(), // REQUIRED by backend
+      };
       await api.put(`/admin/category/${id}`, payload);
 
       const cur = get().categoriesMeta.currentPage || 1;
@@ -421,7 +431,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       const payload = { name: cleanName, category_id };
       await api.post(`/admin/sub-category/create`, payload);
 
-      // do not rely on server meta — refresh ALL
+      // refresh ALL
       await get().fetchAllSubCategories();
 
       set({ loading: false });
