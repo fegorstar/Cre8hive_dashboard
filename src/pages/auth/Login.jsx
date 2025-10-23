@@ -24,17 +24,17 @@ const Login = () => {
     try {
       // Call the login method from Zustand store
       await login(email, password);
-      navigate('/dashboard');  // Redirect to the Dashboard after successful login
+      navigate('/dashboard'); // Redirect to the Dashboard after successful login
     } catch (err) {
       setLoading(false); // Set loading to false after the login attempt
 
       // Check if the error response has specific field errors
-      if (err.response && err.response.data.errors) {
+      if (err?.response?.data?.errors) {
         const errorMessages = err.response.data.errors;
 
         // Extract the first error message for each field
         const errorMessage = Object.keys(errorMessages)
-          .map(field => `${field}: ${errorMessages[field][0]}`)
+          .map((field) => `${field}: ${errorMessages[field][0]}`)
           .join(' | ');
 
         setError(errorMessage);
@@ -50,26 +50,28 @@ const Login = () => {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-50 ">
+    <div className="flex justify-center items-center min-h-screen bg-gray-50">
       <div className="w-full max-w-sm bg-white shadow-sm rounded-xl p-8">
-
-        {/* Logo */}
+        {/* Logo — same dimensions as Navbar */}
         <div className="flex justify-center mb-6">
-          <img src="/assets/images/logo.png" alt="Soundhive Logo" />
+          <img
+            src="/assets/images/Crea8Hive-Logo.png"
+            alt="Crea8Hive Logo"
+            className="block w-auto h-10 object-contain shrink-0"
+            style={{ aspectRatio: 'auto', imageRendering: 'auto' }}
+          />
         </div>
 
         <h3 className="text-bg font-semibold text-center text-gray-800 mb-5">Login to Admin</h3>
 
         {/* Display the error message if login fails */}
-        {error && (
-          <div className="text-red-500 mb-4 text-center">
-            {error}
-          </div>
-        )}
+        {error && <div className="text-red-500 mb-4 text-center">{error}</div>}
 
         <form onSubmit={handleLogin}>
           <div className="mb-4">
-            <label htmlFor="email" className="block text-sm font-medium text-gray-600">Username/Email address</label>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-600">
+              Username/Email address
+            </label>
             <input
               type="text"
               id="email"
@@ -77,38 +79,40 @@ const Login = () => {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="e.g johndoe@gmail.com"
               className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4D3490] transition duration-200"
+              required
+              autoFocus
             />
           </div>
 
           <div className="mb-6 relative">
-            <label htmlFor="password" className="block text-sm font-medium text-gray-600">Password</label>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-600">
+              Password
+            </label>
             <input
-              type={showPassword ? 'text' : 'password'} // Toggle between text and password
+              type={showPassword ? 'text' : 'password'}
               id="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="********"
               className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#4D3490] transition duration-200"
+              required
             />
             {/* Font Awesome Eye Icon */}
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-8 text-gray-600"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
-              {showPassword ? (
-                <i className="fa fa-eye-slash" /> // Show eye-slash when password is visible
-              ) : (
-                <i className="fa fa-eye" /> // Show eye when password is hidden
-              )}
+              {showPassword ? <i className="fa fa-eye-slash" /> : <i className="fa fa-eye" />}
             </button>
           </div>
 
           <button
             type="submit"
-            className="w-full p-3 rounded-lg text-white transition duration-200"
-            style={{ backgroundColor: '#4D3490' }} // Ensures exact color without extra config
-            disabled={loading} // Disable the button when loading
+            className="w-full p-3 rounded-lg text-white transition duration-200 disabled:opacity-70"
+            style={{ backgroundColor: '#4D3490' }}
+            disabled={loading}
           >
             {loading ? (
               <div className="flex justify-center items-center">
