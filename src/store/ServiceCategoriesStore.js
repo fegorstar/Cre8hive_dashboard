@@ -1,7 +1,7 @@
 // src/store/ServiceCategoriesStore.js
-// Admin Service Categories & Subcategories store
-// Now supports full-list fetching for subcategories (client pagination) and
-// includes Category.description in models + create/update payloads.
+// Admin Hives & Service Clusters store
+// Supports full-list fetching for service clusters (client pagination)
+// and includes Hive.description in models + create/update payloads.
 
 import { create } from "zustand";
 import api from "../lib/apiClient";
@@ -98,7 +98,7 @@ const toInt = (v) => {
 const decorateCategory = (raw = {}) => ({
   id: Number(raw.id),
   name: raw.category_name ?? raw.name ?? "",
-  description: raw.description ?? raw.category_description ?? raw.desc ?? "", // NEW
+  description: raw.description ?? raw.category_description ?? raw.desc ?? "", // Hive description
   createdAtReadable: formatReadableDate(raw.created_at || raw.createdAt),
   updatedAtReadable: formatReadableDate(raw.updated_at || raw.updatedAt),
 });
@@ -131,10 +131,10 @@ const useServiceCategoriesStore = create((set, get) => ({
   // Legacy page slice (no longer used by the page, kept for compatibility)
   subCategories: JSON.parse(localStorage.getItem("subCategories") || "[]"),
 
-  // Full list of subcategories across ALL pages (the page uses this for client-side pagination)
+  // Full list of service clusters across ALL pages (the page uses this for client-side pagination)
   subAll: JSON.parse(localStorage.getItem("subCategories") || "[]"),
   subAllLoading: false,
-  subAllPerPage: 10, // we reuse server per_page for a consistent page size
+  subAllPerPage: 10, // reuse server per_page for a consistent page size
 
   // Remembered filter (null => ALL)
   subFilterCategoryId: null,
@@ -162,7 +162,7 @@ const useServiceCategoriesStore = create((set, get) => ({
   loading: false,
   error: null,
 
-  /* --------- FETCH: categories (parents) --------- */
+  /* --------- FETCH: hives (parents) --------- */
   fetchCategories: async (options = undefined) => {
     const page = typeof options === "object" && options?.page ? Number(options.page) : 1;
 
@@ -184,17 +184,14 @@ const useServiceCategoriesStore = create((set, get) => ({
       // eslint-disable-next-line no-console
       console.error("fetchCategories:", err);
       set({
-        error: getErrorMessage(err, "Failed to fetch categories."),
+        error: getErrorMessage(err, "Failed to fetch hives."),
         loading: false,
       });
       throw err;
     }
   },
 
-  /* --------- NEW: FETCH ALL SUBCATEGORIES (across pages) --------- */
-  // We fetch every page once, then the UI does perfect client-side filtering & pagination.
-  // We still pass category_id to the server (helps if it supports filtering),
-  // but we always post-process client-side to guarantee correctness.
+  /* --------- FETCH ALL SERVICE CLUSTERS (across pages) --------- */
   fetchAllSubCategories: async (arg = undefined) => {
     // optional: arg.parentId can be used to request server-side filtering if supported
     let parentId = null;
@@ -236,7 +233,7 @@ const useServiceCategoriesStore = create((set, get) => ({
         page += 1;
       } while (page <= lastPage && page <= MAX_PAGES);
 
-      // decorate with category names if available
+      // decorate with hive names if available
       const cats = get().categories || [];
       const catsMap = new Map(cats.map((c) => [Number(c.id), c.name]));
 
@@ -249,7 +246,7 @@ const useServiceCategoriesStore = create((set, get) => ({
 
       set({
         subAll: list,
-        subCategories: list, // keep legacy mirror updated for other places
+        subCategories: list, // legacy mirror
         subAllPerPage: perPage,
         subCategoriesMeta: {
           currentPage: 1,
@@ -268,7 +265,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       // eslint-disable-next-line no-console
       console.error("fetchAllSubCategories:", err);
       set({
-        error: getErrorMessage(err, "Failed to fetch subcategories."),
+        error: getErrorMessage(err, "Failed to fetch service clusters."),
         subAllLoading: false,
       });
       throw err;
@@ -332,7 +329,7 @@ const useServiceCategoriesStore = create((set, get) => ({
       // eslint-disable-next-line no-console
       console.error("fetchSubCategories:", err);
       set({
-        error: getErrorMessage(err, "Failed to fetch subcategories."),
+        error: getErrorMessage(err, "Failed to fetch service clusters."),
         loading: false,
       });
       throw err;
@@ -342,7 +339,7 @@ const useServiceCategoriesStore = create((set, get) => ({
   /* --------- Filter memory helper --------- */
   setSubFilterCategoryId: (id) => set({ subFilterCategoryId: id ?? null }),
 
-  /* --------- CREATE / UPDATE / DELETE: Category --------- */
+  /* --------- CREATE / UPDATE / DELETE: Hive --------- */
 
   // Accepts { name, description }
   createCategory: async ({ name, description }) => {
@@ -358,13 +355,13 @@ const useServiceCategoriesStore = create((set, get) => ({
       await get().fetchCategories({ page: cur });
 
       set({ loading: false });
-      return { message: "Category created successfully" };
+      return { message: "Hive created successfully" };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("createCategory:", err);
       const message = getErrorMessage(
         err,
-        "Failed to create category. Please try again."
+        "Failed to create hive. Please try again."
       );
       set({ error: message, loading: false });
       throw new Error(message);
@@ -385,13 +382,13 @@ const useServiceCategoriesStore = create((set, get) => ({
       await get().fetchCategories({ page: cur });
 
       set({ loading: false });
-      return { message: "Category updated successfully" };
+      return { message: "Hive updated successfully" };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("updateCategory:", err);
       const message = getErrorMessage(
         err,
-        "Failed to update category. Please try again."
+        "Failed to update hive. Please try again."
       );
       set({ error: message, loading: false });
       throw new Error(message);
@@ -407,20 +404,20 @@ const useServiceCategoriesStore = create((set, get) => ({
       await get().fetchCategories({ page: cur });
 
       set({ loading: false });
-      return { message: "Category deleted successfully" };
+      return { message: "Hive deleted successfully" };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("deleteCategory:", err);
       const message = getErrorMessage(
         err,
-        "Failed to delete category. Please try again."
+        "Failed to delete hive. Please try again."
       );
       set({ error: message, loading: false });
       throw new Error(message);
     }
   },
 
-  /* --------- CREATE / UPDATE / DELETE: Subcategory --------- */
+  /* --------- CREATE / UPDATE / DELETE: Service Cluster --------- */
 
   createSubCategory: async ({ name, parentCategoryId }) => {
     set({ loading: true, error: null });
@@ -435,13 +432,13 @@ const useServiceCategoriesStore = create((set, get) => ({
       await get().fetchAllSubCategories();
 
       set({ loading: false });
-      return { message: "Subcategory created successfully" };
+      return { message: "Service cluster created successfully" };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("createSubCategory:", err);
       const message = getErrorMessage(
         err,
-        "Failed to create subcategory. Please try again."
+        "Failed to create service cluster. Please try again."
       );
       set({ error: message, loading: false });
       throw new Error(message);
@@ -460,13 +457,13 @@ const useServiceCategoriesStore = create((set, get) => ({
       await get().fetchAllSubCategories();
 
       set({ loading: false });
-      return { message: "Subcategory updated successfully" };
+      return { message: "Service cluster updated successfully" };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("updateSubCategory:", err);
       const message = getErrorMessage(
         err,
-        "Failed to update subcategory. Please try again."
+        "Failed to update service cluster. Please try again."
       );
       set({ error: message, loading: false });
       throw new Error(message);
@@ -481,13 +478,13 @@ const useServiceCategoriesStore = create((set, get) => ({
       await get().fetchAllSubCategories();
 
       set({ loading: false });
-      return { message: "Subcategory deleted successfully" };
+      return { message: "Service cluster deleted successfully" };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("deleteSubCategory:", err);
       const message = getErrorMessage(
         err,
-        "Failed to delete subcategory. Please try again."
+        "Failed to delete service cluster. Please try again."
       );
       set({ error: message, loading: false });
       throw new Error(message);

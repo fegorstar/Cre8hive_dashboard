@@ -1,6 +1,6 @@
 // src/pages/ServiceCategories/ServiceCategories.jsx
-// Complete, filter-accurate subcategory pagination (client-side over fully loaded list)
-// Now includes "description" field for Categories (create/update + view)
+// Complete, filter-accurate service-cluster pagination (client-side over fully loaded list)
+// Includes "description" field for Hives (create/update + view)
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -21,8 +21,8 @@ const BRAND_RGB = "rgb(77, 52, 144)";
 /* ---------- Tabs ---------- */
 const Tabs = ({ value, onChange }) => {
   const tabs = [
-    { key: "categories", label: "Categories" },
-    { key: "subcategories", label: "Subcategories" },
+    { key: "categories", label: "Hives" },
+    { key: "subcategories", label: "Service Clusters" },
   ];
   return (
     <div className="border-b border-gray-200 flex items-center justify-between">
@@ -108,15 +108,15 @@ const DetailsList = ({ items }) => (
   </dl>
 );
 
-/* ---------- Category/Subcategory form ---------- */
+/* ---------- Hive / Service Cluster form ---------- */
 const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
   const isView = mode === "view";
-  const isSub = type === "subcategory";
+  const isSub = type === "subcategory"; // service cluster
   const safeCategories = Array.isArray(categories) ? categories : [];
 
   // state
   const [name, setName] = useState(record?.name ?? "");
-  const [description, setDescription] = useState(record?.description ?? ""); // NEW: description for categories
+  const [description, setDescription] = useState(record?.description ?? ""); // for hives
   const [parentCategoryId, setParentCategoryId] = useState(record?.parentCategoryId ?? "");
 
   // sync when record changes
@@ -130,11 +130,11 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
     return (
       <DetailsList
         items={[
-          { label: isSub ? "Subcategory Name" : "Category Name", value: record?.name || "—" },
+          { label: isSub ? "Service Cluster Name" : "Hive Name", value: record?.name || "—" },
           ...(isSub
             ? [
                 {
-                  label: "Category",
+                  label: "Hive",
                   value:
                     safeCategories.find((c) => Number(c.id) === Number(record?.parentCategoryId))
                       ?.name || "—",
@@ -155,14 +155,14 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
         e.preventDefault();
         const payload = isSub
           ? { name, parentCategoryId: Number(parentCategoryId) }
-          : { name, description: (description || "").trim() }; // pass description up
+          : { name, description: (description || "").trim() };
         onSubmit(payload);
       }}
     >
       {/* Name */}
       <div>
         <label className="block text-sm font-medium mb-1">
-          {isSub ? "Subcategory Name" : "Category Name"}
+          {isSub ? "Service Cluster Name" : "Hive Name"}
         </label>
         <input
           type="text"
@@ -174,7 +174,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
         />
       </div>
 
-      {/* Description (categories only) */}
+      {/* Description (hives only) */}
       {!isSub && (
         <div>
           <label className="block text-sm font-medium mb-1">Description</label>
@@ -182,16 +182,16 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             className={`${inputBase} min-h-[96px]`}
-            placeholder="Short summary/description of this category"
+            placeholder="Short summary/description of this hive"
             required
           />
         </div>
       )}
 
-      {/* Parent Category (subcategories only) */}
+      {/* Hive (parent) for service clusters */}
       {isSub && (
         <div>
-          <label className="block text-sm font-medium mb-1">Category</label>
+          <label className="block text-sm font-medium mb-1">Hive</label>
           <select
             value={parentCategoryId || ""}
             onChange={(e) => setParentCategoryId(e.target.value)}
@@ -199,7 +199,7 @@ const CategoryForm = ({ mode, type, record, categories, onSubmit }) => {
             required
           >
             <option value="" disabled>
-              Select category…
+              Select hive…
             </option>
             {safeCategories.map((c) => (
               <option key={c.id} value={c.id}>
@@ -258,7 +258,7 @@ const CategoriesTable = ({ rows, loading, onView, onEdit, onDelete, footerLeft, 
                     <Spinner className="!text-gray-500" /> Loading…
                   </span>
                 ) : (
-                  "No categories yet."
+                  "No hives yet."
                 )}
               </td>
             </tr>
@@ -304,7 +304,7 @@ const SubcategoriesTable = ({
         <thead className="bg-gray-100">
           <tr>
             <th className="text-left px-4 py-3 font-semibold">Name</th>
-            <th className="text-left px-4 py-3 font-semibold">Category</th>
+            <th className="text-left px-4 py-3 font-semibold">Hive</th>
             <th className="text-left px-4 py-3 font-semibold">Created</th>
             <th className="text-left px-4 py-3 font-semibold">Updated</th>
             <th className="text-right px-4 py-3 font-semibold">Actions</th>
@@ -319,7 +319,7 @@ const SubcategoriesTable = ({
                     <Spinner className="!text-gray-500" /> Loading…
                   </span>
                 ) : (
-                  "No subcategories."
+                  "No service clusters."
                 )}
               </td>
             </tr>
@@ -356,13 +356,13 @@ const SubcategoriesTable = ({
 const useServiceCategoriesStoreActions = () => {
   const categories = useServiceCategoriesStore((s) => s.categories);
 
-  // Client-side full dataset for subcategories
+  // Client-side full dataset for service clusters
   const subAll = useServiceCategoriesStore((s) => s.subAll);
   const subAllLoading = useServiceCategoriesStore((s) => s.subAllLoading);
   const subAllPerPage = useServiceCategoriesStore((s) => s.subAllPerPage);
   const fetchAllSubCategories = useServiceCategoriesStore((s) => s.fetchAllSubCategories);
 
-  // Remote meta used only for categories table
+  // Remote meta used only for hives table
   const categoriesMeta = useServiceCategoriesStore((s) => s.categoriesMeta);
 
   // Remembered filter helpers
@@ -445,34 +445,34 @@ const ServiceCategories = () => {
     setCatsPage(categoriesMeta?.currentPage || 1);
   }, [categoriesMeta?.currentPage]);
 
-  // initial categories
+  // initial hives
   useEffect(() => {
     (async () => {
       try {
         setCatsLoading(true);
         await fetchCategories({ page: 1 });
       } catch (e) {
-        toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load categories." });
+        toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load hives." });
       } finally {
         setCatsLoading(false);
       }
     })();
   }, [fetchCategories]); // eslint-disable-line
 
-  // load ALL subcats when tab opens (for accurate client pagination + totals)
+  // load ALL service clusters when tab opens (for accurate client pagination + totals)
   useEffect(() => {
     if (tab !== "subcategories") return;
     (async () => {
       try {
         await fetchAllSubCategories();
       } catch (e) {
-        toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load subcategories." });
+        toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load service clusters." });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  /* ----- CATEGORIES (remote pagination) ----- */
+  /* ----- HIVES (remote pagination) ----- */
   const catsTotal = categoriesMeta?.total || 0;
   const catsTotalPages = categoriesMeta?.lastPage || 1;
   const catsStart = categoriesMeta?.from || 0;
@@ -526,10 +526,10 @@ const ServiceCategories = () => {
     </div>
   );
 
-  /* ----- SUBCATEGORIES (client pagination over full list) ----- */
+  /* ----- SERVICE CLUSTERS (client pagination over full list) ----- */
   const pageSize = subAllPerPage || 10;
 
-  // Full list -> filter by selected category
+  // Full list -> filter by selected hive
   const allSubs = Array.isArray(subAll) ? subAll : [];
   const subsFiltered =
     subcatFilter === "ALL"
@@ -559,7 +559,7 @@ const ServiceCategories = () => {
   const subsFooterLeft =
     subcatFilter === "ALL"
       ? makeFooterLeft(subsTotal, subsStart, subsEnd)
-      : `Showing ${subsStart}–${subsEnd} of ${subsTotal} (Category: ${
+      : `Showing ${subsStart}–${subsEnd} of ${subsTotal} (Hive: ${
           categoriesMap.get(Number(subcatFilter)) || "—"
         })`;
 
@@ -592,7 +592,7 @@ const ServiceCategories = () => {
   // Modals
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create"); // 'create' | 'view' | 'edit'
-  const [modalType, setModalType] = useState("category"); // 'category' | 'subcategory'
+  const [modalType, setModalType] = useState("category"); // 'category' (Hive) | 'subcategory' (Service Cluster)
   const [modalRecord, setModalRecord] = useState(null);
 
   const openCreateCategory = () => {
@@ -648,9 +648,9 @@ const ServiceCategories = () => {
     try {
       if (type === "category") {
         await deleteCategory(row.id);
-        toast.add({ type: "success", title: "Deleted", message: "Category deleted successfully." });
+        toast.add({ type: "success", title: "Deleted", message: "Hive deleted successfully." });
 
-        // Refresh categories (remote)
+        // Refresh hives (remote)
         try {
           setCatsLoading(true);
           await fetchCategories({ page: catsPage || 1 });
@@ -658,13 +658,13 @@ const ServiceCategories = () => {
           setCatsLoading(false);
         }
 
-        // Also refresh full subcategory list (since parent may affect display)
+        // Also refresh full service cluster list (since parent may affect display)
         await fetchAllSubCategories();
       } else {
         await deleteSubCategory(row.id);
-        toast.add({ type: "success", title: "Deleted", message: "Subcategory deleted successfully." });
+        toast.add({ type: "success", title: "Deleted", message: "Service cluster deleted successfully." });
 
-        // Refresh full subcategory list for accurate totals + pages
+        // Refresh full service cluster list for accurate totals + pages
         await fetchAllSubCategories();
       }
       setConfirmOpen(false);
@@ -683,19 +683,19 @@ const ServiceCategories = () => {
       if (modalType === "subcategory") {
         if (modalMode === "edit" && modalRecord?.id) {
           await updateSubCategory(modalRecord.id, payload);
-          toast.add({ type: "success", title: "Updated", message: "Subcategory updated successfully." });
+          toast.add({ type: "success", title: "Updated", message: "Service cluster updated successfully." });
         } else {
           await createSubCategory(payload);
-          toast.add({ type: "success", title: "Created", message: "Subcategory created successfully." });
+          toast.add({ type: "success", title: "Created", message: "Service cluster created successfully." });
         }
         await fetchAllSubCategories(); // refresh full list so totals/pages are correct
       } else {
         if (modalMode === "edit" && modalRecord?.id) {
           await updateCategory(modalRecord.id, payload); // payload includes description
-          toast.add({ type: "success", title: "Updated", message: "Category updated successfully." });
+          toast.add({ type: "success", title: "Updated", message: "Hive updated successfully." });
         } else {
           await createCategory(payload); // payload includes description
-          toast.add({ type: "success", title: "Created", message: "Category created successfully." });
+          toast.add({ type: "success", title: "Created", message: "Hive created successfully." });
         }
         try {
           setCatsLoading(true);
@@ -703,7 +703,7 @@ const ServiceCategories = () => {
         } finally {
           setCatsLoading(false);
         }
-        await fetchAllSubCategories(); // keep sub list consistent with new parent
+        await fetchAllSubCategories(); // keep list consistent with new parent
       }
       closeModal();
     } catch (e) {
@@ -716,7 +716,7 @@ const ServiceCategories = () => {
   };
 
   const modalTitle = `${modalMode[0].toUpperCase()}${modalMode.slice(1)} ${
-    modalType === "category" ? "Category" : "Subcategory"
+    modalType === "category" ? "Hive" : "Service Cluster"
   }`;
 
   return (
@@ -735,7 +735,7 @@ const ServiceCategories = () => {
           <div className="px-6 pb-20 pt-6">
             {/* Header */}
             <div className="flex items-center mb-6 justify-between -mx-6 border-b border-gray-200 pb-4 bg-white px-6">
-              <p className="inline-block text-lg leading-5 font-semibold">Service Categories</p>
+              <p className="inline-block text-lg leading-5 font-semibold">Hives</p>
             </div>
 
             {/* Tabs + Create */}
@@ -749,7 +749,7 @@ const ServiceCategories = () => {
                       className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm shadow"
                       style={{ backgroundColor: BRAND_RGB, height: "36px" }}
                     >
-                      + New Category
+                      + New Hive
                     </button>
                   ) : (
                     <button
@@ -757,17 +757,17 @@ const ServiceCategories = () => {
                       className="inline-flex items-center gap-2 rounded-lg text-white px-4 py-2 text-sm shadow"
                       style={{ backgroundColor: BRAND_RGB, height: "36px" }}
                     >
-                      + New Subcategory
+                      + New Service Cluster
                     </button>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Subcategories filter */}
+            {/* Service clusters filter */}
             {tab === "subcategories" && (
               <div className="flex items-center gap-3 mb-4">
-                <label className="text-sm text-gray-700">Category filter</label>
+                <label className="text-sm text-gray-700">Hive filter</label>
                 <select
                   value={subcatFilter}
                   onChange={(e) => {
@@ -778,7 +778,7 @@ const ServiceCategories = () => {
                   }}
                   className={`${selectBase} w-60`}
                 >
-                  <option value="ALL">All categories</option>
+                  <option value="ALL">All hives</option>
                   {safeCategories.map((c) => (
                     <option key={c.id} value={String(c.id)}>
                       {c.name}
@@ -867,8 +867,8 @@ const ServiceCategories = () => {
             title="Delete record"
             message={
               confirmPayload?.type === "category"
-                ? `Are you sure you want to delete the category “${confirmPayload?.row?.name}”?`
-                : `Are you sure you want to delete the subcategory “${confirmPayload?.row?.name}”?`
+                ? `Are you sure you want to delete the hive “${confirmPayload?.row?.name}”?`
+                : `Are you sure you want to delete the service cluster “${confirmPayload?.row?.name}”?`
             }
             confirmText="Delete"
             onConfirm={handleConfirmDelete}
