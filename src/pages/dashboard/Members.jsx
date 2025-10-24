@@ -1,13 +1,5 @@
 // src/pages/dashboard/Members.jsx
-// Summary cards now follow counts payload:
-//  - total_users
-//  - total_creators
-//  - total_non_creators
-//  - verified_creators
-//  - unverified_creators
-// Plus 2 derived KPIs:
-//  - Creators Verification Rate
-//  - Creators Share of Users
+// Summary cards follow counts payload. Toggle is optimistic and stable (no immediate refetch).
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -31,9 +23,26 @@ const BRAND_RGB = "rgb(77, 52, 144)";
 /* =========================== Helpers =========================== */
 const toNormStatus = (raw) => {
   const v = String(raw ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "active" ? "active" : "inactive";
+  return v === "1" || v === "true" || v === "active" || v === "yes" ? "active" : "inactive";
 };
 const dash = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+
+// Prefer the boolean if present, then other flags (covers: active, is_active, status, creator.active)
+const isActiveFrom = (row = {}) => {
+  if (typeof row.active === "boolean") return row.active;
+  if (row.is_active !== undefined && row.is_active !== null) {
+    const v = String(row.is_active).toLowerCase();
+    return v === "1" || v === "true" || v === "yes";
+  }
+  if (row.creator && row.creator.active !== undefined && row.creator.active !== null) {
+    const v = String(row.creator.active).toLowerCase();
+    return v === "1" || v === "true" || v === "active" || v === "yes";
+  }
+  if (row.status !== undefined && row.status !== null) {
+    return toNormStatus(row.status) === "active";
+  }
+  return !!row.email_verified_at;
+};
 
 const VerifiedBadge = ({ ok }) => (
   <span
@@ -121,11 +130,7 @@ const ThreeDotsMenu = ({ items }) => {
 /* =========================== View =========================== */
 const MemberView = ({ record }) => {
   if (!record) return null;
-  const creator = record.creator || {};
-  // Derive status: status → active → creator.active → (fallback) email_verified_at
-  const status = toNormStatus(
-    record?.status ?? record?.active ?? creator?.active ?? (record?.email_verified_at ? "active" : "inactive")
-  );
+  const status = isActiveFrom(record) ? "active" : "inactive";
 
   return (
     <div className="space-y-5">
@@ -135,7 +140,7 @@ const MemberView = ({ record }) => {
             {dash(record.name || `${record.first_name ?? ""} ${record.last_name ?? ""}`.trim())}
           </div>
           <div className="mt-1 text-xs text-gray-500">
-            Member ID: <span className="font-medium text-gray-700">{dash(record.id)}</span>
+            Member ID: <span className="font-medium text-gray-700">{dash(record.id || record.member_id)}</span>
           </div>
         </div>
         <StatusPill value={status} />
@@ -175,7 +180,7 @@ const MemberView = ({ record }) => {
   );
 };
 
-/* =========================== Edit form (matches POST schema) =========================== */
+/* =========================== Edit form =========================== */
 const MemberForm = ({ record = {}, onSubmit, submitting }) => {
   const [first_name, setFirstName] = useState(record.first_name ?? "");
   const [last_name, setLastName] = useState(record.last_name ?? "");
@@ -349,9 +354,7 @@ const MembersTable = ({
               </tr>
             ) : (
               safeRows.map((row) => {
-                const active =
-                  toNormStatus(row?.status ?? row?.active ?? row?.creator?.active ?? (row?.email_verified_at ? "active" : "")) ===
-                  "active";
+                const active = isActiveFrom(row);
                 const id = row.id || row.member_id;
                 return (
                   <tr key={id} className="border-t border-gray-100">
@@ -422,7 +425,7 @@ const Members = () => {
   const {
     members,
     pagination,
-    counts,          // global, only refreshed on unfiltered fetch
+    counts,
     fetchMembers,
     getMember,
     updateMember,
@@ -446,11 +449,11 @@ const Members = () => {
 
   // Initial unfiltered fetch to seed table + GLOBAL counts
   useEffect(() => {
-    fetchMembers?.({ page: 1, per_page: perPage, q: "", role: "" }); // updates counts
+    fetchMembers?.({ page: 1, per_page: perPage, q: "", role: "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debounced fetch on q/role/page (does NOT update counts in store)
+  // Debounced fetch on q/role/page
   useEffect(() => {
     const t = setTimeout(() => {
       fetchMembers?.({ page, per_page: perPage, q, role });
@@ -472,7 +475,7 @@ const Members = () => {
 
   const allRows = useMemo(() => (Array.isArray(members) ? members : []), [members]);
 
-  // Summary metrics (robust to missing keys)
+  // Summary metrics
   const totalUsers = Number(
     counts?.total_users ?? counts?.total ?? counts?.users ?? pagination?.total ?? 0
   );
@@ -489,7 +492,7 @@ const Members = () => {
   const creatorsShareOfUsers =
     totalUsers > 0 ? Math.round((totalCreators / totalUsers) * 100) : 0;
 
-  // Modal open instantly; then hydrate with GET /admin/user/:id and merge
+  // Modal open & hydrate
   const merge = (a, b) => ({ ...(a || {}), ...(b || {}) });
 
   const openView = async (record) => {
@@ -497,7 +500,7 @@ const Members = () => {
     setModalRecord(record);
     setModalOpen(true);
     try {
-      const full = await getMember?.(record.id);
+      const full = await getMember?.(record.id || record.member_id);
       setModalRecord((prev) => merge(prev, full));
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load member." });
@@ -509,7 +512,7 @@ const Members = () => {
     setModalRecord(record);
     setModalOpen(true);
     try {
-      const full = await getMember?.(record.id);
+      const full = await getMember?.(record.id || record.member_id);
       setModalRecord((prev) => merge(prev, full));
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Could not load member." });
@@ -522,9 +525,15 @@ const Members = () => {
     try {
       const id = row.id || row.member_id;
       setTogglingId(id);
-      await toggleMemberStatus?.(id);
+
+      // Optimistic update happens inside the store.
+      await toggleMemberStatus?.(id, row);
+
+      // DO NOT immediately refetch; let optimistic UI stick.
+      // If you still want a background sync, uncomment:
+      // setTimeout(() => fetchMembers?.({ page, per_page: perPage, q, role }), 1200);
+
       toast.add({ type: "success", title: "Status updated" });
-      await fetchMembers?.({ page, per_page: perPage, q, role });
     } catch (e) {
       toast.add({ type: "error", title: "Failed", message: e?.message || "Status change failed." });
       console.error(e);
@@ -535,9 +544,9 @@ const Members = () => {
 
   const handleUpdate = async (payload) => {
     try {
-      if (!modalRecord?.id) return;
+      if (!modalRecord?.id && !modalRecord?.member_id) return;
       setSubmitting(true);
-      await updateMember?.(modalRecord.id, payload); // POST /admin/user/:id
+      await updateMember?.(modalRecord.id || modalRecord.member_id, payload);
       toast.add({ type: "success", title: "Updated", message: "Member updated successfully." });
       await fetchMembers?.({ page, per_page: perPage, q, role });
       closeModal();
@@ -555,7 +564,6 @@ const Members = () => {
   const startIdx = (page - 1) * per + 1;
   const endIdx = Math.min(page * per, pagination?.total || allRows.length || 0);
 
-  // Server already filtered; keep as-is
   const filteredRows = allRows;
   const pageRows =
     pagination?.total ? filteredRows : filteredRows.slice((page - 1) * per, page * per);
@@ -564,7 +572,7 @@ const Members = () => {
     <main>
       <ToastAlert toasts={toast.toasts} remove={toast.remove} />
 
-      <div className="overflow-x-hidden flex bg-white border-t border-gray-300">
+      <div className="overflow-x-hidden flex bg-white border-top border-gray-300">
         <Sidebar />
         <div
           id="app-layout-content"
@@ -578,27 +586,23 @@ const Members = () => {
               <p className="inline-block px-6 text-base md:text-lg leading-5 font-semibold">Users</p>
             </div>
 
-            {/* Summary cards (from counts + derived KPIs) */}
+            {/* Summary cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-4 mb-4">
-              {/* Total Users */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-1">Total Users</div>
                 <div className="text-2xl font-semibold">{totalUsers.toLocaleString()}</div>
               </div>
 
-              {/* Total Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-1">Total Creators</div>
                 <div className="text-2xl font-semibold">{totalCreators.toLocaleString()}</div>
               </div>
 
-              {/* Non-Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-1">Total Non-Creators</div>
                 <div className="text-2xl font-semibold">{totalNonCreators.toLocaleString()}</div>
               </div>
 
-              {/* Verified Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-1">Verified Creators</div>
                 <div className="text-2xl font-semibold">{verifiedCreators.toLocaleString()}</div>
@@ -607,13 +611,11 @@ const Members = () => {
                 </div>
               </div>
 
-              {/* Unverified Creators */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-1">Unverified Creators</div>
                 <div className="text-2xl font-semibold">{unverifiedCreators.toLocaleString()}</div>
               </div>
 
-              {/* Creators share of users */}
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
                 <div className="text-xs text-gray-600 mb-1">Creators Share of Users</div>
                 <div className="text-2xl font-semibold">{creatorsShareOfUsers}%</div>
@@ -623,7 +625,7 @@ const Members = () => {
               </div>
             </div>
 
-            {/* Filters bar: Role + Search */}
+            {/* Filters bar */}
             <div className="mb-3 bg-white rounded-xl border border-gray-200 px-4 pt-2 pb-3 shadow-sm">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-3">
@@ -666,7 +668,7 @@ const Members = () => {
               </div>
             </div>
 
-            {/* Table — always render */}
+            {/* Table */}
             <MembersTable
               rows={pageRows}
               loading={loading}
