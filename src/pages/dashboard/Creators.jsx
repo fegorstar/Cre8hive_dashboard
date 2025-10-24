@@ -1,6 +1,6 @@
 // src/pages/dashboard/Creators.jsx
 // List page with tabs + filters. "View" navigates to /creators/:id (details page).
-// Row menu has only View + Edit.
+// Row menu has only View + Edit. Table shows S/N (serial number) instead of DB id.
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -350,6 +350,7 @@ const CreatorsTable = ({
   togglingId,
   footerLeft,
   footerRight,
+  startIndex = 1, // NEW: base index for S/N
 }) => {
   const safeRows = Array.isArray(rows) ? rows : [];
   const emptyText = q ? `No results found for “${q}”` : "No creators yet.";
@@ -360,7 +361,7 @@ const CreatorsTable = ({
         <table className="w-full text-sm">
           <thead className="bg-gray-100">
             <tr>
-              <th className="text-left px-4 py-3 font-semibold">ID</th>
+              <th className="text-left px-4 py-3 font-semibold">S/N</th>
               <th className="text-left px-4 py-3 font-semibold">Name</th>
               <th className="text-left px-4 py-3 font-semibold">Gender</th>
               <th className="text-left px-4 py-3 font-semibold">NIN</th>
@@ -385,7 +386,7 @@ const CreatorsTable = ({
                 </td>
               </tr>
             ) : (
-              safeRows.map((row) => {
+              safeRows.map((row, idx) => {
                 const active = getStatus(row) === "active";
                 const name = getName(row);
                 const isToggling = togglingId === row.id;
@@ -395,9 +396,10 @@ const CreatorsTable = ({
                     : Array.isArray(row.services)
                     ? row.services.length
                     : "—";
+                const sn = startIndex + idx; // S/N per page
                 return (
                   <tr key={row.id} className="border-t border-gray-100">
-                    <td className="px-4 py-3">{dash(row.id)}</td>
+                    <td className="px-4 py-3">{sn}</td>
                     <td className="px-4 py-3">{dash(name)}</td>
                     <td className="px-4 py-3 capitalize">{dash(row.gender || row.user?.gender)}</td>
                     <td className="px-4 py-3">{dash(row.nin || row.user?.nin)}</td>
@@ -544,7 +546,7 @@ const Creators = () => {
   const total = pagination?.total ?? allRows.length ?? 0;
   const per = pagination?.per_page || perPage;
   const totalPages = Math.max(1, Math.ceil((pagination?.total || total) / per));
-  const startIdx = total === 0 ? 0 : (page - 1) * per + 1;
+  const startIdx = total === 0 ? 0 : (page - 1) * per + 1; // base for S/N
   const endIdx = total === 0 ? 0 : Math.min(page * per, total);
 
   const footerLeftText =
@@ -726,6 +728,7 @@ const Creators = () => {
               togglingId={togglingId}
               footerLeft={footerLeftText}
               footerRight={footerRightControls}
+              startIndex={startIdx} // base for S/N
             />
           </div>
 
